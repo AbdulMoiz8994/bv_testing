@@ -1,0 +1,978 @@
+{
+  "name": "workflow a",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "function uuidv4() {\n  return \"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g, (c) => {\n    const r = (Math.random() * 16) | 0;\n    const v = c === \"x\" ? r : (r & 0x3) | 0x8;\n    return v.toString(16);\n  });\n}\n\nfunction isPlainObject(o) {\n  return o && typeof o === \"object\" && !Array.isArray(o);\n}\n\nconst body = $json.body ?? $json;\n\nlet urlList = [];\nif (Array.isArray(body.urls)) urlList = body.urls;\nelse if (typeof body.url === \"string\") urlList = [body.url];\n\nurlList = urlList\n  .filter((u) => typeof u === \"string\" && u.trim())\n  .map((u) => u.trim());\n\nif (!urlList.length) {\n  throw new Error('Payload must include \"urls\" (array) or \"url\" (string).');\n}\n\n// De-duplicate, cap by MAX_URLS\nconst max = parseInt($env.MAX_URLS || \"100\", 10);\nconst seen = new Set();\nconst urls = urlList\n  .filter((u) => {\n    const key = u.toLowerCase();\n    if (seen.has(key)) return false;\n    seen.add(key);\n    return true;\n  })\n  .slice(0, max);\n\nconst baseContext = isPlainObject(body.context) ? body.context : {};\nconst complianceProfile = body.complianceProfile || body.compliance_profile || '';\nconst { urls: _urls, url: _url, context: _context, complianceProfile: _cp, compliance_profile: _cp2, ...rest } = body;\n\nconst runId = uuidv4();\nconst startedAt = new Date().toISOString();\n\nreturn urls.map((u, i) => ({\n  json: {\n    url: u,\n    context: {\n      ...baseContext,\n      ...rest,\n      run_id: runId,\n      index: i,\n      total: urls.length,\n      started_at: startedAt,\n      complianceProfile: complianceProfile,\n    },\n  },\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4640,
+        -64
+      ],
+      "id": "19cd8660-da12-4e0a-bc28-fc495bf7bcb2",
+      "name": "Prepare URLs & Context"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -4416,
+        -64
+      ],
+      "id": "5c6204e8-996a-4cc6-a59d-e9bf6755b57c",
+      "name": "Iterate URLs"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "url",
+              "renameField": true,
+              "outputFieldName": "urls"
+            },
+            {
+              "fieldToAggregate": "violations"
+            },
+            {
+              "fieldToAggregate": "high_impact"
+            },
+            {
+              "fieldToAggregate": "ai_cost_usd"
+            },
+            {
+              "fieldToAggregate": "failures"
+            },
+            {
+              "fieldToAggregate": "notes"
+            },
+            {
+              "fieldToAggregate": "run_id"
+            },
+            {
+              "fieldToAggregate": "started_at"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -4192,
+        -208
+      ],
+      "id": "16d33487-5fc8-43d4-8d9e-81f53e9d10c3",
+      "name": "Collect URL Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\n\nreturn [\n  {\n    json: {\n      run_id: item.run_id?.[0] || \"\",\n      started_at: item.started_at?.[0] || \"\",\n      completed_at: new Date().toISOString(),\n      urls: item.urls?.length || 0,\n      violations: (item.violations || []).reduce(\n        (a, b) => a + Number(b || 0),\n        0,\n      ),\n      high_impact: (item.high_impact || []).reduce(\n        (a, b) => a + Number(b || 0),\n        0,\n      ),\n      ai_cost_usd: (item.ai_cost_usd || []).reduce(\n        (a, b) => a + Number(b || 0),\n        0,\n      ),\n      failures: (item.failures || []).reduce((a, b) => a + Number(b || 0), 0),\n      notes: (item.notes || []).filter(Boolean).join(\" | \").slice(0, 900),\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3968,
+        -208
+      ],
+      "id": "8958fd24-401c-4064-9810-7b57f7777189",
+      "name": "Aggregate Run Summary"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1a96e9f1-c634-461e-af04-62a6a5b0bea5"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "email"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "79c0c881-a7a8-490d-98f6-79aac5959983",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "slack",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "slack"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "92f51215-7692-44fe-ab06-1ea0557797d6",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "sms",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sms"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8500cc59-39e7-4018-82da-deec4b83b7dc",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "crm",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "crm"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -3072,
+        -160
+      ],
+      "id": "612edf3c-e299-42ec-9e37-bdeb783449fa",
+      "name": "Choose Notification Channel"
+    },
+    {
+      "parameters": {
+        "jsCode": "const notifyEnv = $env.NOTIFY_CHANNELS || \"\";\n\nif (!notifyEnv.trim()) {\n  return [];\n}\n\nconst channels = notifyEnv.split(\",\").map(x => x.trim()).filter(Boolean);\nreturn channels.map(c => ({ json: { channel: c } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3296,
+        -112
+      ],
+      "id": "5824d9cb-393c-4766-aae6-95c18949b362",
+      "name": "Prepare Notification Targets",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -2848,
+        -208
+      ],
+      "id": "272693c3-52f6-403e-af05-ac524c7d15b9",
+      "name": "Branch Notification Email"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $env.METRICS_TARGET.toUpperCase() }}",
+                    "rightValue": "SHEETS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "99709608-ba68-44b7-883c-fa40ca31cdbe"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SHEETS"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f930767f-f969-4d12-9e2c-b1d7149cced1",
+                    "leftValue": "={{ $env.METRICS_TARGET.toUpperCase() }}",
+                    "rightValue": "AIRTABLE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AIRTABLE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f4629c10-ccb7-4083-9390-dee71cd347d9",
+                    "leftValue": "={{ $env.METRICS_TARGET.toUpperCase() }}",
+                    "rightValue": "CSV",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CSV"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 0
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -3744,
+        -128
+      ],
+      "id": "7177911d-82ad-419a-a53f-86727b97a763",
+      "name": "Choose Metrics Target"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $items(\"Prepare URLs & Context\")[0].json.context.owner }}",
+        "subject": "=\ud83d\udcca Accessibility Run Summary - Run {{ $now.toFormat('yyyyLLdd') }}",
+        "message": "=<!DOCTYPE html>\n<html>\n  <body style=\"font-family: Arial, sans-serif; color: #333; line-height: 1.5;\">\n    <h2 style=\"color: #007bff;\">\ud83d\udcca Accessibility Run Completed</h2>\n    <p>Here is the summary for the latest run.</p>\n\n    <table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\">\n      <tr><td><b>Run:</b></td><td>{{ $now.toFormat('yyyyLLdd') }}</td></tr>\n      <tr><td><b>Started:</b></td><td>{{$json.started_at}}</td></tr>\n      <tr><td><b>Completed:</b></td><td>{{$json.completed_at}}</td></tr>\n      <tr><td><b>URLs Scanned:</b></td><td>{{$json.urls}}</td></tr>\n      <tr><td><b>Violations:</b></td><td>{{$json.violations}} ({{$json.high_impact}} high)</td></tr>\n      <tr><td><b>AI Cost:</b></td><td>${{$json.ai_cost_usd}}</td></tr>\n      <tr><td><b>Failures:</b></td><td>{{$json.failures}}</td></tr>\n      <tr>\n        <td><b>Notes:</b></td>\n        <td>{{ $json.notes ? $json.notes : 'All scans succeeded.' }}</td>\n      </tr>\n    </table>\n  </body>\n</html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -2624,
+        -208
+      ],
+      "id": "0db85d70-5b71-4d02-a03f-cd08e451c04d",
+      "name": "Send a message",
+      "webhookId": "b715611d-6233-408a-8075-766450e5855e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DFMKZiOx7QJorRZ0",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HrlKECidXb47thNW",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/HrlKECidXb47thNW",
+          "cachedResultName": "workflow c"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "url": "={{ $json.url }}",
+            "context": "={{ $json.context }}",
+            "complianceProfile": "={{ $json.context?.complianceProfile || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "context",
+              "displayName": "context",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "complianceProfile",
+              "displayName": "complianceProfile",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -4192,
+        -16
+      ],
+      "id": "5e186f7a-61c8-4007-9b6e-fc3596ef17de",
+      "name": "Call 'workflow c'"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_ACCESSIBILITY_RESULTS_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_SHEET_RUNS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_id\u00a0": "={{ $json.run_id }}",
+            "started_at\u00a0": "={{ $json.started_at }}",
+            "completed_at\u00a0": "={{ $json.completed_at }}",
+            "urls\u00a0": "={{ $json.urls }}",
+            "violations\u00a0": "={{ $json.violations }}",
+            "high_impact\u00a0": "={{ $json.high_impact }}",
+            "ai_cost_usd\u00a0": "={{ $json.ai_cost_usd }}",
+            "failures\u00a0": "={{ $json.failures }}",
+            "notes\u00a0": "={{ $json.notes }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "run_id\u00a0",
+              "displayName": "run_id\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "started_at\u00a0",
+              "displayName": "started_at\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "completed_at\u00a0",
+              "displayName": "completed_at\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "urls\u00a0",
+              "displayName": "urls\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "violations\u00a0",
+              "displayName": "violations\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "high_impact\u00a0",
+              "displayName": "high_impact\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_cost_usd\u00a0",
+              "displayName": "ai_cost_usd\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "failures\u00a0",
+              "displayName": "failures\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes\u00a0",
+              "displayName": "notes\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -3520,
+        -112
+      ],
+      "id": "c7f5ba27-5812-44f2-b9c8-a2fc7ce2cd8e",
+      "name": "Save Run Summary to Sheet",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DzNhHwxMPqOC26xb",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scan",
+        "options": {
+          "allowedOrigins": "={{ $env.ALLOWED_ORIGINS }}"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -4864,
+        -64
+      ],
+      "id": "83cdb08e-4de7-4e30-a933-ab51302a4847",
+      "name": "Receive Scan Request",
+      "webhookId": "e296a6df-d9e7-4eed-8697-627cf3292a9e"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -2848,
+        64
+      ],
+      "id": "53353ba9-3cc7-45a9-9127-f3db53b56ad5",
+      "name": "Branch Notification Slack"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_ID }}",
+          "mode": "id"
+        },
+        "text": "=:bar_chart: *Accessibility scan*\\n*URL:* {{ $json.url || 'n/a' }}\\n*Violations:* {{ $json.violations_count ?? $json.violations ?? 0 }} ({{ $json.high_impact_count ?? $json.high_impact ?? 0 }} high)\\n{{ $json.report_link ? '<' + $json.report_link + '|Open report>' : '' }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        -2624,
+        64
+      ],
+      "id": "7d92208e-34b8-4ccc-9ed4-654179825979",
+      "name": "Send Slack Notification",
+      "notesInFlow": true,
+      "notes": "Optional channel. Add a Slack credential and set NOTIFY_CHANNELS to include slack.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_TABLE_RUNS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -3520,
+        208
+      ],
+      "id": "53f85f8c-8385-4797-bfbe-dd614f44285b",
+      "name": "Create Airtable Run Record",
+      "notesInFlow": true,
+      "notes": "Optional target. Add an Airtable credential and set the relevant target to AIRTABLE.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "22d4e9a8-6feb-41a1-8e70-91c87cc3fcf6",
+              "leftValue": "={{ String($json.context?.showDiscovery ?? $env.SHOW_DISCOVERY_IN_REPORT ?? 'false').toLowerCase() }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4416,
+        16
+      ],
+      "id": "6856f047-f4c1-4672-93c7-cfd88e0b46b4",
+      "name": "Discovery Requested?",
+      "notesInFlow": true,
+      "notes": "True when the request sets showDiscovery, or SHOW_DISCOVERY_IN_REPORT is true."
+    },
+    {
+      "parameters": {
+        "command": "=node /data/scripts/run-discovery.js \"{{ $json.origin }}\" {{ ($json.submittedUrls || []).map(u => '\"' + u + '\"').join(\" \") }}"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -4416,
+        160
+      ],
+      "id": "e04ab4a9-61fa-4bf9-85f8-a55a06188507",
+      "name": "Discover Related Pages",
+      "notesInFlow": true,
+      "notes": "One run per site. Reads the sitemap; does not scan what it finds.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map discovery results back onto every submitted page by site.\n// Reporting only: nothing found here is scanned. Scanning discovered pages is\n// what INPUT_SOURCE=SITEMAP SCAN does on the scheduled workflow.\nconst bySite = new Map();\n\nfor (const item of $input.all()) {\n  let parsed = null;\n  try {\n    parsed = JSON.parse(item.json.stdout || \"{}\");\n  } catch (e) {\n    parsed = null;\n  }\n  const origin = item.json.origin || parsed?.discoveredUrls?.[0]?.url || null;\n  if (origin) bySite.set(origin, parsed);\n}\n\nreturn $(\"Prepare URLs & Context\").all().map((seed) => {\n  let origin = null;\n  try {\n    origin = new URL(seed.json.url).origin;\n  } catch (e) {\n    origin = null;\n  }\n  const found = origin ? bySite.get(origin) : null;\n\n  return {\n    json: {\n      ...seed.json,\n      context: {\n        ...seed.json.context,\n        discovery_summary: found?.discoverySummary || null,\n        discovered_urls: found?.discoveredUrls || [],\n        discovered_subdomains: found?.discoveredSubdomains || [],\n      },\n    },\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4192,
+        160
+      ],
+      "id": "e8585d9a-5f94-4d0f-9b89-d5395b694cef",
+      "name": "Attach Discovery to Context",
+      "notesInFlow": true,
+      "notes": "Falls through with empty discovery if the command produced nothing."
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -3968,
+        -64
+      ],
+      "id": "d200594e-6912-4191-bd71-f187b35b2a94",
+      "name": "Merge Discovery Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// One discovery run per site, not per page. A client ordering 25 pages on one\n// domain would otherwise trigger 25 identical sitemap reads, each able to run\n// for DISCOVERY_MAX_SECONDS.\nconst seen = new Map();\n\nfor (const item of $input.all()) {\n  let origin;\n  try {\n    origin = new URL(item.json.url).origin;\n  } catch (e) {\n    continue;\n  }\n  if (!seen.has(origin)) {\n    seen.set(origin, { json: { origin, url: origin, submittedUrls: [] } });\n  }\n  // Collected so the discovery script can mark which discovered pages were\n  // actually submitted (inScope), rather than every page reporting false.\n  seen.get(origin).json.submittedUrls.push(item.json.url);\n}\n\nreturn Array.from(seen.values());\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4256,
+        240
+      ],
+      "id": "3c854973-bd75-4a80-979c-cca533351c76",
+      "name": "One Discovery Per Site",
+      "notesInFlow": true,
+      "notes": "Reduces the submitted pages to distinct sites before discovery runs."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Prepare URLs & Context": {
+      "main": [
+        [
+          {
+            "node": "Discovery Requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Iterate URLs": {
+      "main": [
+        [
+          {
+            "node": "Collect URL Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call 'workflow c'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect URL Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Run Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Run Summary": {
+      "main": [
+        [
+          {
+            "node": "Choose Metrics Target",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Notification Channel": {
+      "main": [
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Notification Targets": {
+      "main": [
+        [
+          {
+            "node": "Choose Notification Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Notification Email": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Metrics Target": {
+      "main": [
+        [
+          {
+            "node": "Save Run Summary to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Airtable Run Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'workflow c'": {
+      "main": [
+        [
+          {
+            "node": "Iterate URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Run Summary to Sheet": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive Scan Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare URLs & Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Notification Slack": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discovery Requested?": {
+      "main": [
+        [
+          {
+            "node": "One Discovery Per Site",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Discovery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Related Pages": {
+      "main": [
+        [
+          {
+            "node": "Attach Discovery to Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Discovery to Context": {
+      "main": [
+        [
+          {
+            "node": "Merge Discovery Result",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Discovery Result": {
+      "main": [
+        [
+          {
+            "node": "Iterate URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One Discovery Per Site": {
+      "main": [
+        [
+          {
+            "node": "Discover Related Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "0NYAAQrl0oyyecyl",
+    "timeSavedPerExecution": 2
+  },
+  "versionId": "1ee55bd7-0ad8-43d3-880e-05fa0e8010b8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8d247cf16eb4040c6cf79bccbccc70033d90560918afac46d25aed633b9f1b92"
+  },
+  "id": "MFabwG2vZwybIV5C",
+  "tags": []
+}

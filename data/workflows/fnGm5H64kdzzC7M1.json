@@ -1,0 +1,1172 @@
+{
+  "name": "workflow b",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2960,
+        -240
+      ],
+      "id": "99d2dea9-c7d4-49d8-8f87-90df4de0d42b",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $env.INPUT_SOURCE.toUpperCase() }}",
+                    "rightValue": "SHEET",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "38021192-b07f-4b26-aba1-262c5a904bf2"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SHEET"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "9b6aac82-79a3-4762-a9c0-046178893eb1",
+                    "leftValue": "={{ $env.INPUT_SOURCE.toUpperCase() }}",
+                    "rightValue": "WEBHOOK",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "WEBHOOK"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "33666c5c-cfc8-4cb7-af19-790881cbfe28",
+                    "leftValue": "={{ $env.INPUT_SOURCE.toUpperCase() }}",
+                    "rightValue": "SITEMAP SCAN",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SITEMAP SCAN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -2736,
+        -256
+      ],
+      "id": "9820530a-3c12-4adf-91e5-5dfe976e267e",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_SHEETS_ACCESSIBILITY_RESULTS_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_SHEETS_SHEET_URLS_ID}}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -2512,
+        -240
+      ],
+      "id": "84700899-ea22-44fb-9042-94477a90f614",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DzNhHwxMPqOC26xb",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuidv4() {\n  return \"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g, (c) => {\n    const r = (Math.random() * 16) | 0;\n    const v = c === \"x\" ? r : (r & 0x3) | 0x8;\n    return v.toString(16);\n  });\n}\n\nconst rows = $input.all().map(i => i.json).filter(r => r && r.url);\n\nconst runId = uuidv4();\nconst startedAt = new Date().toISOString();\nconst total = rows.length;\n\nreturn rows.map((r, i) => ({\n  json: {\n    url: String(r.url).trim(),\n    context: {\n      site: String(r.site || \"\").trim(),\n      priority: String(r.priority || \"\").trim(),\n      owner: String(r.owner || \"\").trim(),\n      run_id: runId,\n      index: i,\n      total,\n      started_at: startedAt,\n      complianceProfile: String(r.complianceProfile || r.compliance_profile || '').trim(),\n      // Present only when INPUT_SOURCE is SITEMAP SCAN. Carried so the report\n      // can render the discovery section when it is enabled.\n      discovery_summary: r.discovery_summary || null,\n      discovered_subdomains: r.discovered_subdomains || [],\n      discovered_from: r.discovered_from || null\n    }\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2064,
+        -240
+      ],
+      "id": "db8b5c90-677b-4d37-b0ef-3398a4aa069a",
+      "name": "Prepare URLs & Context"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1840,
+        -240
+      ],
+      "id": "ce178c4a-d909-4438-9e5b-8c65c120dd2b",
+      "name": "Iterate URLs"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HrlKECidXb47thNW",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/HrlKECidXb47thNW",
+          "cachedResultName": "workflow c"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "url": "={{ $json.url }}",
+            "context": "={{ $json.context }}",
+            "complianceProfile": "={{ $json.context?.complianceProfile || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "context",
+              "displayName": "context",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object"
+            },
+            {
+              "id": "complianceProfile",
+              "displayName": "complianceProfile",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -1616,
+        -192
+      ],
+      "id": "18aec0d9-eede-4e6b-90b7-b6af7939c4c6",
+      "name": "Run Sub-Workflow: Scan + Plan",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "url",
+              "renameField": true,
+              "outputFieldName": "urls"
+            },
+            {
+              "fieldToAggregate": "violations"
+            },
+            {
+              "fieldToAggregate": "high_impact"
+            },
+            {
+              "fieldToAggregate": "ai_cost_usd"
+            },
+            {
+              "fieldToAggregate": "failures"
+            },
+            {
+              "fieldToAggregate": "notes"
+            },
+            {
+              "fieldToAggregate": "run_id"
+            },
+            {
+              "fieldToAggregate": "started_at"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -1616,
+        -384
+      ],
+      "id": "cf8f81b6-c0d4-4c67-8850-dc286fb582a0",
+      "name": "Collect URL Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\n\nreturn [\n  {\n    json: {\n      run_id: item.run_id?.[0] || \"\",\n      started_at: item.started_at?.[0] || \"\",\n      completed_at: new Date().toISOString(),\n      urls: item.urls?.length || 0,\n      violations: (item.violations || []).reduce(\n        (a, b) => a + Number(b || 0),\n        0,\n      ),\n      high_impact: (item.high_impact || []).reduce(\n        (a, b) => a + Number(b || 0),\n        0,\n      ),\n      ai_cost_usd: (item.ai_cost_usd || []).reduce(\n        (a, b) => a + Number(b || 0),\n        0,\n      ),\n      failures: (item.failures || []).reduce((a, b) => a + Number(b || 0), 0),\n      notes: (item.notes || []).filter(Boolean).join(\" | \").slice(0, 900),\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        -384
+      ],
+      "id": "0c9c23e1-9946-480a-aa98-7d9ec8418858",
+      "name": "Aggregate Run Summary"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1a96e9f1-c634-461e-af04-62a6a5b0bea5"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "email"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "79c0c881-a7a8-490d-98f6-79aac5959983",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "slack",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "slack"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "92f51215-7692-44fe-ab06-1ea0557797d6",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "sms",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sms"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8500cc59-39e7-4018-82da-deec4b83b7dc",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "crm",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "crm"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -496,
+        -336
+      ],
+      "id": "99453394-65a5-4722-9d71-ba9443b2b9aa",
+      "name": "Choose Notification Channel"
+    },
+    {
+      "parameters": {
+        "jsCode": "const notifyEnv = $env.NOTIFY_CHANNELS || \"\";\n\nif (!notifyEnv.trim()) {\n  return [];\n}\n\nconst channels = notifyEnv.split(\",\").map(x => x.trim()).filter(Boolean);\nreturn channels.map(c => ({ json: { channel: c } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        -288
+      ],
+      "id": "fb06ad36-fc73-40b0-9250-20ba757363db",
+      "name": "Prepare Notification Targets",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -272,
+        -384
+      ],
+      "id": "4b318f12-6e49-4100-bf0f-5a10a52f962c",
+      "name": "Branch Notification Email"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cde0da1b-dee3-4ca6-a49c-7bfee9487aee",
+              "name": "url",
+              "value": "={{ $json['url\u00a0'] ?? $json['url'] ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "d5e0114d-699e-4878-bece-eccb6a043fed",
+              "name": "site",
+              "value": "={{ $json['site\u00a0'] ?? $json['site'] ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "ea6eb37b-d37a-4449-aa49-a044c8ebb7b0",
+              "name": "priority",
+              "value": "={{ $json['priority\u00a0'] ?? $json['priority'] ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "e3042658-f7e8-4ede-bc76-58f6bbbb6e9c",
+              "name": "owner",
+              "value": "={{ $json['owner\u00a0'] ?? $json['owner'] ?? '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2288,
+        -240
+      ],
+      "id": "09e6fbb3-00ac-4972-8aec-a6d89988fbc1",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $env.METRICS_TARGET.toUpperCase() }}",
+                    "rightValue": "SHEETS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "99709608-ba68-44b7-883c-fa40ca31cdbe"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SHEETS"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f930767f-f969-4d12-9e2c-b1d7149cced1",
+                    "leftValue": "={{ $env.METRICS_TARGET.toUpperCase() }}",
+                    "rightValue": "AIRTABLE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AIRTABLE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f4629c10-ccb7-4083-9390-dee71cd347d9",
+                    "leftValue": "={{ $env.METRICS_TARGET.toUpperCase() }}",
+                    "rightValue": "CSV",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CSV"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 0
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -1168,
+        -304
+      ],
+      "id": "502034a9-b631-4533-a751-ab90cc96b217",
+      "name": "Choose Metrics Target"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $items(\"Prepare URLs & Context\")[0].json.context.owner }}",
+        "subject": "=\ud83d\udcca Accessibility Run Summary - Run {{ $now.toFormat('yyyyLLdd') }}",
+        "message": "=<!DOCTYPE html>\n<html>\n  <body style=\"font-family: Arial, sans-serif; color: #333; line-height: 1.5;\">\n    <h2 style=\"color: #007bff;\">\ud83d\udcca Accessibility Run Completed</h2>\n    <p>Here is the summary for the latest run.</p>\n\n    <table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\">\n      <tr><td><b>Run:</b></td><td>{{ $now.toFormat('yyyyLLdd') }}</td></tr>\n      <tr><td><b>Started:</b></td><td>{{$json.started_at}}</td></tr>\n      <tr><td><b>Completed:</b></td><td>{{$json.completed_at}}</td></tr>\n      <tr><td><b>URLs Scanned:</b></td><td>{{$json.urls}}</td></tr>\n      <tr><td><b>Violations:</b></td><td>{{$json.violations}} ({{$json.high_impact}} high)</td></tr>\n      <tr><td><b>AI Cost:</b></td><td>${{$json.ai_cost_usd}}</td></tr>\n      <tr><td><b>Failures:</b></td><td>{{$json.failures}}</td></tr>\n      <tr>\n        <td><b>Notes:</b></td>\n        <td>{{ $json.notes ? $json.notes : 'All scans succeeded.' }}</td>\n      </tr>\n    </table>\n  </body>\n</html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -48,
+        -384
+      ],
+      "id": "bee0ce04-f5f4-4d8e-971e-e2dc8d5b0beb",
+      "name": "Send a message",
+      "webhookId": "b715611d-6233-408a-8075-766450e5855e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DFMKZiOx7QJorRZ0",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_ACCESSIBILITY_RESULTS_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_SHEET_RUNS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_id\u00a0": "={{ $json.run_id }}",
+            "started_at\u00a0": "={{ $json.started_at }}",
+            "completed_at\u00a0": "={{ $json.completed_at }}",
+            "urls\u00a0": "={{ $json.urls }}",
+            "violations\u00a0": "={{ $json.violations }}",
+            "high_impact\u00a0": "={{ $json.high_impact }}",
+            "ai_cost_usd\u00a0": "={{ $json.ai_cost_usd }}",
+            "failures\u00a0": "={{ $json.failures }}",
+            "notes\u00a0": "={{ $json.notes }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "run_id\u00a0",
+              "displayName": "run_id\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "started_at\u00a0",
+              "displayName": "started_at\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "completed_at\u00a0",
+              "displayName": "completed_at\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "urls\u00a0",
+              "displayName": "urls\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "violations\u00a0",
+              "displayName": "violations\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "high_impact\u00a0",
+              "displayName": "high_impact\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_cost_usd\u00a0",
+              "displayName": "ai_cost_usd\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "failures\u00a0",
+              "displayName": "failures\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes\u00a0",
+              "displayName": "notes\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -944,
+        -288
+      ],
+      "id": "5f09a030-c099-4ab1-b18b-a99940ae8509",
+      "name": "Save Run Summary to Sheet",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DzNhHwxMPqOC26xb",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -272,
+        -112
+      ],
+      "id": "ae67c667-a3b9-4b18-9294-905d06903c52",
+      "name": "Branch Notification Slack"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_ID }}",
+          "mode": "id"
+        },
+        "text": "=:bar_chart: *Accessibility scan*\\n*URL:* {{ $json.url || 'n/a' }}\\n*Violations:* {{ $json.violations_count ?? $json.violations ?? 0 }} ({{ $json.high_impact_count ?? $json.high_impact ?? 0 }} high)\\n{{ $json.report_link ? '<' + $json.report_link + '|Open report>' : '' }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        -48,
+        -112
+      ],
+      "id": "243cb478-d837-4e0e-a452-2a10fdeb14ea",
+      "name": "Send Slack Notification",
+      "notesInFlow": true,
+      "notes": "Optional channel. Add a Slack credential and set NOTIFY_CHANNELS to include slack.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_TABLE_RUNS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -944,
+        32
+      ],
+      "id": "6aef0ca5-7a23-49e2-b3ca-dea9d4e5af26",
+      "name": "Create Airtable Run Record",
+      "notesInFlow": true,
+      "notes": "Optional target. Add an Airtable credential and set the relevant target to AIRTABLE.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_SHEETS_ACCESSIBILITY_RESULTS_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{$env.GOOGLE_SHEETS_SHEET_URLS_ID}}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -2512,
+        96
+      ],
+      "id": "c7814fef-e22b-474b-a3fa-eefdfa02234e",
+      "name": "Get row(s) in sheet (Sitemap)",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DzNhHwxMPqOC26xb",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cde0da1b-dee3-4ca6-a49c-7bfee9487aee",
+              "name": "url",
+              "value": "={{ $json['url\u00a0'] ?? $json['url'] ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "d5e0114d-699e-4878-bece-eccb6a043fed",
+              "name": "site",
+              "value": "={{ $json['site\u00a0'] ?? $json['site'] ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "ea6eb37b-d37a-4449-aa49-a044c8ebb7b0",
+              "name": "priority",
+              "value": "={{ $json['priority\u00a0'] ?? $json['priority'] ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "e3042658-f7e8-4ede-bc76-58f6bbbb6e9c",
+              "name": "owner",
+              "value": "={{ $json['owner\u00a0'] ?? $json['owner'] ?? '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2288,
+        96
+      ],
+      "id": "2ed8efa7-a4d3-4671-b0b0-1fee577b4b2a",
+      "name": "Edit Fields (Sitemap)"
+    },
+    {
+      "parameters": {
+        "command": "=node /data/scripts/run-discovery.js \"{{ $json.url }}\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -2064,
+        96
+      ],
+      "id": "f766722f-a971-4d15-bf2f-b57144ada2dc",
+      "name": "Discover URLs from Sitemap",
+      "notesInFlow": true,
+      "notes": "Reads robots.txt and the sitemap. Does not crawl links. Capped by MAX_URLS.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Expand each seed row into the URLs its sitemap publishes.\n// Discovery never blocks a run: if it finds nothing, or fails, the seed URL is\n// scanned on its own exactly as it would be under INPUT_SOURCE=SHEET.\nconst MAX = parseInt($env.MAX_URLS || \"100\", 10);\nconst out = [];\nconst seen = new Set();\n\nfor (const item of $input.all()) {\n  const seedRow = $(\"Edit Fields (Sitemap)\").all().find(\n    (r) => r.json && r.json.url\n  );\n  const seed = item.json.seed || (seedRow ? seedRow.json : {});\n\n  let result = null;\n  try {\n    result = JSON.parse(item.json.stdout || \"{}\");\n  } catch (e) {\n    result = null;\n  }\n\n  const discovered = Array.isArray(result?.discoveredUrls)\n    ? result.discoveredUrls.map((u) => u.url).filter(Boolean)\n    : [];\n\n  const list = discovered.length > 0 ? discovered : [seed.url].filter(Boolean);\n\n  for (const u of list) {\n    const key = String(u).toLowerCase();\n    if (seen.has(key)) continue;\n    seen.add(key);\n    if (out.length >= MAX) break;\n    out.push({\n      json: {\n        url: u,\n        site: seed.site || \"\",\n        priority: seed.priority || \"\",\n        owner: seed.owner || \"\",\n        complianceProfile: seed.complianceProfile || \"\",\n        discovery_summary: result?.discoverySummary || null,\n        discovered_subdomains: result?.discoveredSubdomains || [],\n        discovered_from: seed.url || null,\n      },\n    });\n  }\n  if (out.length >= MAX) break;\n}\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1840,
+        96
+      ],
+      "id": "73a64454-4267-4e49-9860-39b9eef6a6a1",
+      "name": "Expand Discovered URLs",
+      "notesInFlow": true,
+      "notes": "Falls back to the seed URL when discovery finds nothing."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "Get row(s) in sheet (Sitemap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare URLs & Context": {
+      "main": [
+        [
+          {
+            "node": "Iterate URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Iterate URLs": {
+      "main": [
+        [
+          {
+            "node": "Collect URL Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run Sub-Workflow: Scan + Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Sub-Workflow: Scan + Plan": {
+      "main": [
+        [
+          {
+            "node": "Iterate URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect URL Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Run Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Run Summary": {
+      "main": [
+        [
+          {
+            "node": "Choose Metrics Target",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Notification Channel": {
+      "main": [
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Notification Targets": {
+      "main": [
+        [
+          {
+            "node": "Choose Notification Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Notification Email": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Prepare URLs & Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Metrics Target": {
+      "main": [
+        [
+          {
+            "node": "Save Run Summary to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Airtable Run Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Run Summary to Sheet": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Notification Slack": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet (Sitemap)": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields (Sitemap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields (Sitemap)": {
+      "main": [
+        [
+          {
+            "node": "Discover URLs from Sitemap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover URLs from Sitemap": {
+      "main": [
+        [
+          {
+            "node": "Expand Discovered URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Discovered URLs": {
+      "main": [
+        [
+          {
+            "node": "Prepare URLs & Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "0NYAAQrl0oyyecyl",
+    "timeSavedPerExecution": 2
+  },
+  "versionId": "d525da5a-aa59-43e2-8e9d-e638216b84e8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8d247cf16eb4040c6cf79bccbccc70033d90560918afac46d25aed633b9f1b92"
+  },
+  "id": "fnGm5H64kdzzC7M1",
+  "tags": []
+}

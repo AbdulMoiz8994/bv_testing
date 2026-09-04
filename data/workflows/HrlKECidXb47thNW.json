@@ -1,0 +1,2940 @@
+{
+  "name": "workflow c",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "={{ ($env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME) && $env.STORAGE_PUBLIC_BASE ? `${$env.STORAGE_PUBLIC_BASE}/${$env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME}${$env.STORAGE_UPLOAD_PATH || \"/raw/upload\"}/reports/csv/reports.csv` : '' }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -25056,
+        -944
+      ],
+      "id": "84bf6f72-e4c8-4f84-8386-9be18791b2c8",
+      "name": "Get Reports",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst headers = [\n  \"id\",\n  \"url\",\n  \"engine\",\n  \"violations_count\",\n  \"high_impact_count\",\n  \"summary\",\n  \"plan_json\",\n  \"report_link\",\n  \"run_id\",\n  \"created_at\"\n];\n\nfunction escapeCsv(value) {\n  if (value == null) return \"\";\n  let str = String(value);\n  if (str.includes('\"') || str.includes(',') || str.includes('\\n')) {\n    str = '\"' + str.replace(/\"/g, '\"\"') + '\"';\n  }\n  return str;\n}\n\nconst headerRow = headers.join(\",\");\nconst rows = items.map(item => headers.map(h => escapeCsv(item[h])).join(\",\"));\nconst csvString = [headerRow, ...rows].join(\"\\n\");\n\nreturn [{\n  binary: {\n    reports: {\n      data: Buffer.from(csvString).toString('base64'),\n      mimeType: 'text/csv',\n      fileName: 'reports.csv'\n    }\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -21920,
+        -1536
+      ],
+      "id": "e109881a-7b6b-45a6-a78e-8cd8897ee7d1",
+      "name": "Assemble Binary CSV"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\n\nconst headers = [\n  \"id\",\n  \"url\",\n  \"engine\",\n  \"violations_count\",\n  \"high_impact_count\",\n  \"summary\",\n  \"plan_json\",\n  \"report_link\",\n  \"run_id\",\n  \"created_at\"\n];\n\nconst headerRow = headers.join(\",\");\n\nconst rows = items.map(item => {\n  return headers.map(h => {\n    let val = item[h] ?? \"\";\n    if (typeof val === \"object\") {\n      val = JSON.stringify(val);\n    }\n    return `\"${String(val).replace(/\"/g, '\"\"').replace(/\\n/g, \" \")}\"`;\n  }).join(\",\");\n});\n\nconst data = headerRow + \"\\n\" + rows.join(\"\\n\");\n\nreturn [{ json: { data } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -24384,
+        -848
+      ],
+      "id": "da686b73-1f77-4fea-9050-fba97de006cb",
+      "name": "Build CSV Rows (New File)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -21696,
+        -2112
+      ],
+      "id": "369019ed-229f-438b-894c-613c4871fcef",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cloudName = $env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME || \"\";\nconst fileName = $binary?.report?.fileName || null;\nconst scannedUrl = $json.scan_raw?.url || $json.context?.url || $json.url || \"\";\n\nlet report_link = null;\n\nif (!($json?.error) && cloudName && fileName) {\n  const fileNameWithoutExt = fileName.replace('.html', '');\n  report_link = `${$env.STORAGE_PUBLIC_BASE}/${cloudName}${$env.STORAGE_UPLOAD_PATH || \"/raw/upload\"}/reports/html/${fileNameWithoutExt}.html`;\n}\n\nreturn [\n  {\n    json: {\n      ...$json,\n      url: scannedUrl,\n      report_link,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -25728,
+        -1232
+      ],
+      "id": "012f91e3-6c11-4f6a-bbe0-d36d5e378e84",
+      "name": "Build Report Link"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OPENAI_API_BASE }}/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.OPENAI_MODEL }}"
+            },
+            {
+              "name": "messages[0].role",
+              "value": "system"
+            },
+            {
+              "name": "messages[0].content",
+              "value": "=You are an accessibility auditor producing WCAG 2.2 AA remediation plans with concise, actionable guidance and code examples."
+            },
+            {
+              "name": "messages[1].role",
+              "value": "user"
+            },
+            {
+              "name": "messages[1].content",
+              "value": "=URL: {{ $json.url }}\n\nViolations (JSON): {{ JSON.stringify($json.countable_violations || $json.scan_raw.violations) }}\n\nOutput JSON with keys: summary, prioritized[], fixes[], qaChecklist[].\n\nFor each prioritized item include: issueId, wcag[], impact (low/med/high), effort (low/med/high).\n\nSchema and formatting requirements:\n- Return a single JSON object only (no markdown, no prose outside JSON, no extra keys).\n- Keys must appear exactly as: summary, prioritized, fixes, qaChecklist.\n\nsummary\n- Type: string\n- Content: 1-5 concise sentences in natural language\n- Do not count or estimate totals; do not restate the full violations list\n\nprioritized\n- Type: array<object> (0-20 items)\n- Each object must be:\n {\n    \"issueId\": string (must exactly match an \"id\" from the Violations JSON),\n    \"wcag\": string[] (e.g., [\"1.4.3\"]; may be empty),\n    \"impact\": \"low\" | \"medium\" | \"high\" (use \"medium\", not \"med\"; map any synonyms like \"serious\"/\"critical\" internally to these),\n    \"effort\": \"low\" | \"medium\" | \"high\"\n }\n- Include unique issueId values only (no duplicates)\n\nfixes\n- Type: array<object> (0+ items)\n- Each object must be:\n {\n    \"target\": string (CSS selector or element hint; use \" if unknown),\n    \"description\": string (clear, imperative, human-readable; never empty),\n    \"codeExample\": string (concise code snippet; use \" if unknown)\n }\n\nqaChecklist\n- Type: string[] (3-15 items)\n- Each item is a single, testable verification step written as an imperative sentence\n\nStrict JSON rules\n- UTF-8 text, no comments, no trailing commas, no code fences, no additional keys"
+            },
+            {
+              "name": "response_format.type",
+              "value": "=json_object"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -27744,
+        -880
+      ],
+      "id": "04574bfc-a6ca-4701-9635-cec19b972ba5",
+      "name": "Generate OpenAI Remediation Plan",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "openAiApi": {
+          "id": "SdNr64zHPeGshnQd",
+          "name": "OpenAi account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -27072,
+        -1280
+      ],
+      "id": "08477efa-8a74-47dc-a5d5-e48687ee6b39",
+      "name": "Merge Error AI Final Output",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -27296,
+        -1472
+      ],
+      "id": "235987d7-514d-4232-b217-a64e031dbd8b",
+      "name": "Merge AI Result",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\n\n// OpenAI and Azure return choices[0].message.content.\n// Anthropic returns content[0].text. Accept either so the provider switch is\n// a settings change rather than a code change.\nconst rawText =\n  resp.choices?.[0]?.message?.content ??\n  (Array.isArray(resp.content) ? resp.content.map(b => b?.text || \"\").join(\"\") : \"\") ??\n  \"\";\n\nlet content = {};\ntry {\n  content = JSON.parse(rawText || \"{}\");\n} catch (e) {\n  content = { parse_error: e.message, raw: rawText || \"\" };\n}\n\nconst usage = resp.usage || {};\n// Anthropic names these input_tokens and output_tokens.\nconst promptTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;\nconst completionTokens = usage.completion_tokens ?? usage.output_tokens ?? 0;\nconst totalTokens = usage.total_tokens || (promptTokens + completionTokens);\n\nconst promptRatePerM = parseFloat($env.OPENAI_PROMPT_COST_PER_M || \"0\");\nconst completionRatePerM = parseFloat($env.OPENAI_COMPLETION_COST_PER_M || \"0\");\n\nconst promptCost = (promptTokens / 1_000_000) * promptRatePerM;\nconst completionCost = (completionTokens / 1_000_000) * completionRatePerM;\nconst totalCost = promptCost + completionCost;\n\nreturn [{\n  json: {\n    message: { content },\n    model: resp.model || $env.OPENAI_MODEL || \"unknown\",\n    prompt_tokens: promptTokens,\n    completion_tokens: completionTokens,\n    total_tokens: totalTokens,\n    ai_cost_usd: Number(totalCost.toFixed(6))\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -27520,
+        -976
+      ],
+      "id": "4a804675-4332-4d71-a782-992f3cd81baa",
+      "name": "Parse AI Response + Cost"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "73db8820-b323-4ce9-8afa-03aa4b096792",
+                    "leftValue": "={{ $env.SCAN_ENGINE.toUpperCase() }}",
+                    "rightValue": "AXE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AXE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$env.SCAN_ENGINE.toUpperCase() }}",
+                    "rightValue": "PA11Y",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "58ff4481-6576-4729-8658-e7f4ef7448c0"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "PA11Y"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 0
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -29088,
+        -1280
+      ],
+      "id": "779db589-9f23-497b-8d53-89654793feea",
+      "name": "Choose Scan Engine",
+      "notesInFlow": true,
+      "notes": "Unrecognized SCAN_ENGINE values fall back to AXE, the wider standard."
+    },
+    {
+      "parameters": {
+        "command": "=node /data/scripts/run-axe.js \"{{ $json.url }}\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -28864,
+        -1344
+      ],
+      "id": "07b0fd4b-9648-492e-b602-2a612013ca99",
+      "name": "Execute AXE Scan",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = JSON.parse($json.stdout || \"{}\");\n\nreturn [\n  {\n    json: {\n      scan_raw: {\n        violations: raw.violations || [],\n        testEngine: raw.testEngine || { name: \"axe-core\" },\n        timestamp: raw.timestamp || new Date().toISOString(),\n        url: raw.url || \"N/A\",\n      },\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -28640,
+        -1344
+      ],
+      "id": "8e138c99-84b4-418c-ba31-451051e11c8d",
+      "name": "Parse AXE Output"
+    },
+    {
+      "parameters": {
+        "command": "=node /data/scripts/run-pa11y.js \"{{ $json.url }}\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -28864,
+        -1056
+      ],
+      "id": "6cce14e0-523d-4957-b52d-b9b2ec6b9101",
+      "name": "Execute PA11Y Scan",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = JSON.parse($json.stdout || \"{}\");\n\nconst violations = (raw.issues || []).map((issue) => ({\n  id: issue.code || \"unknown\",\n  impact: issue.type,\n  help: issue.message,\n  helpUrl: \"\",\n  nodes: [{ target: [issue.selector || \"\"] }],\n}));\n\n// run-pa11y.js reports which engines actually produced this result in\n// runnersUsed. Hardcoding \"htmlcs\" here mislabeled the report whenever\n// PA11Y_RUNNER selected axe, or both, which is the shipped default.\nconst runnersUsed = Array.isArray(raw.runnersUsed) && raw.runnersUsed.length\n  ? raw.runnersUsed.join(\",\")\n  : \"htmlcs\";\n\nreturn [\n  {\n    json: {\n      scan_raw: {\n        violations,\n        testEngine: { name: \"pa11y\", version: runnersUsed },\n        timestamp: new Date().toISOString(),\n        url: raw.pageUrl || raw.documentTitle || \"N/A\",\n      },\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -28640,
+        -1056
+      ],
+      "id": "4d0748c5-be10-4b26-856d-4219e1cdd2db",
+      "name": "Parse PA11Y Output"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -28416,
+        -1424
+      ],
+      "id": "18751ffe-720d-4946-87ee-271c446a706c",
+      "name": "Combine Context + AXE Results"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -28416,
+        -1136
+      ],
+      "id": "be8c0700-ce87-4f92-9eea-8a5fdc7f1b70",
+      "name": "Combine Context + PA11Y Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- retired criteria --------------------------------------------------------\n// W3C removed 4.1.1 Parsing in WCAG 2.2 and advises treating it as always\n// satisfied for HTML and XML content. HTML CodeSniffer still emits F77 for it.\n// On one live scan this inflated 31 real failures to 99.\n// https://www.w3.org/WAI/standards-guidelines/wcag/faq\nconst OBSOLETE_SC = [\"4.1.1\"];\n\nfunction scFromRuleId(id) {\n  const s = String(id || \"\");\n  let m = s.match(/Guideline\\d_\\d\\.(\\d)_(\\d)_(\\d+)/);\n  if (m) return m[1] + \".\" + m[2] + \".\" + m[3];\n  m = s.match(/\\b(\\d)\\.(\\d)\\.(\\d+)\\b/);\n  if (m) return m[1] + \".\" + m[2] + \".\" + m[3];\n  return null;\n}\n\nfunction isObsoleteFinding(v) {\n  if (v && v.isObsolete === true) return true;\n  const sc = (v && v.wcag_sc) || scFromRuleId(v && (v.id || v.code || v.rule));\n  return !!sc && OBSOLETE_SC.indexOf(sc) !== -1;\n}\n\nreturn items.map((i) => {\n  const raw = i.json.scan_raw || {};\n  const engine = (raw.testEngine?.name || $env.SCAN_ENGINE || \"unknown\")\n    .toString()\n    .toLowerCase();\n  const v = Array.isArray(raw.violations) ? raw.violations : [];\n\n  const norm = (s) => {\n    const x = String(s || \"\").toLowerCase();\n    if ([\"critical\", \"serious\", \"error\", \"high\"].includes(x)) return \"high\";\n    if ([\"moderate\", \"warning\", \"medium\", \"med\"].includes(x)) return \"medium\";\n    if ([\"minor\", \"notice\", \"low\"].includes(x)) return \"low\";\n    return \"-\";\n  };\n\n  const vNorm = v.map((x) => ({\n    id: x.id || x.rule || x.issueId || \"-\",\n    impact: norm(x.impact || x.type),\n    help: x.help || x.description || x.message || \"-\",\n    nodes: Array.isArray(x.nodes) ? x.nodes : [],\n    helpUrl: x.helpUrl || x.url || \"\",\n    tags: Array.isArray(x.tags) ? x.tags : [],\n  }));\n\n  const vCountable = vNorm.filter((y) => !isObsoleteFinding(y));\n\n  const counts = {\n    total: vCountable.length,\n    high: vCountable.filter((y) => y.impact === \"high\").length,\n    medium: vCountable.filter((y) => y.impact === \"medium\").length,\n    low: vCountable.filter((y) => y.impact === \"low\").length,\n    obsolete: vNorm.length - vCountable.length,\n  };\n\n  const prioritized = vCountable.map((r) => ({\n    issueId: r.id,\n    wcag: r.tags\n      .filter((t) => /^wcag/i.test(String(t)))\n      .map((t) => t.replace(/^wcag(\\d+)/i, \"$1\"))\n      .slice(0, 3),\n    impact: r.impact,\n    effort: \"unknown\",\n  }));\n\n  const fixes = vCountable.map((r) => ({\n    target: r?.nodes?.[0]?.target?.[0] || \"\",\n    description: r.help,\n    codeExample: \"\",\n  }));\n\n  const qaChecklist = vCountable.map((r) => `Verify: ${r.help}`);\n\n  const summary = `${engine} found ${counts.total} issues (${counts.high} high, ${counts.medium} medium, ${counts.low} low).`;\n\n  return {\n    json: {\n      ...i.json,\n      engine,\n      violations_count: counts.total,\n      countable_violations: vCountable,\n      high_impact_count: counts.high,\n      plan_json: {\n        summary,\n        prioritized,\n        fixes,\n        qaChecklist,\n      },\n    },\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -28192,
+        -1280
+      ],
+      "id": "e663082d-cc60-4699-a8a7-10d2d11a00b8",
+      "name": "Generate Violations Plan (Rule-based)"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $env.AI_MODE.toUpperCase() }}",
+                    "rightValue": "OFF",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "790c2822-56a0-41fa-b947-0c74d156f2af"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "OFF"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "b74bae83-6d30-45d3-aa49-3940e9f15b62",
+                    "leftValue": "={{ $env.AI_MODE.toUpperCase() }}",
+                    "rightValue": "OPENAI",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "OPENAI"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "64e79cfa-014b-47e3-bef4-4d655791f0e9",
+                    "leftValue": "={{ $env.AI_MODE.toUpperCase() }}",
+                    "rightValue": "AZURE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AZURE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0b70a0d8-6e79-4886-9cc6-3b110277d337",
+                    "leftValue": "={{ $env.AI_MODE.toUpperCase() }}",
+                    "rightValue": "CLAUDE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CLAUDE"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 0
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -27968,
+        -976
+      ],
+      "id": "5057145c-412d-44b4-8095-78465b3583bd",
+      "name": "Choose AI Provider"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- retired criteria --------------------------------------------------------\n// W3C removed 4.1.1 Parsing in WCAG 2.2 and advises treating it as always\n// satisfied for HTML and XML content. HTML CodeSniffer still emits F77 for it.\n// On one live scan this inflated 31 real failures to 99.\n// https://www.w3.org/WAI/standards-guidelines/wcag/faq\nconst OBSOLETE_SC = [\"4.1.1\"];\n\nfunction scFromRuleId(id) {\n  const s = String(id || \"\");\n  let m = s.match(/Guideline\\d_\\d\\.(\\d)_(\\d)_(\\d+)/);\n  if (m) return m[1] + \".\" + m[2] + \".\" + m[3];\n  m = s.match(/\\b(\\d)\\.(\\d)\\.(\\d+)\\b/);\n  if (m) return m[1] + \".\" + m[2] + \".\" + m[3];\n  return null;\n}\n\nfunction isObsoleteFinding(v) {\n  if (v && v.isObsolete === true) return true;\n  const sc = (v && v.wcag_sc) || scFromRuleId(v && (v.id || v.code || v.rule));\n  return !!sc && OBSOLETE_SC.indexOf(sc) !== -1;\n}\n\nconst parseNode = $node[\"Generate Violations Plan (Rule-based)\"].json;\n\nconst norm = (s) => {\n  const v = String(s || \"\").toLowerCase();\n  if ([\"critical\", \"serious\", \"error\", \"high\"].includes(v)) return \"high\";\n  if ([\"moderate\", \"warning\", \"medium\", \"med\"].includes(v)) return \"medium\";\n  if ([\"minor\", \"notice\", \"low\"].includes(v)) return \"low\";\n  return \"-\";\n};\n\nconst raw = Array.isArray(parseNode.scan_raw?.violations)\n  ? parseNode.scan_raw.violations\n  : [];\nconst rawNorm = raw.map((r) => ({ impact: norm(r.impact || r.type) }));\nconst aiCountable = rawNorm.filter((x) => !isObsoleteFinding(x));\n\nconst counts = {\n  total: aiCountable.length,\n  high: aiCountable.filter((x) => x.impact === \"high\").length,\n  medium: aiCountable.filter((x) => x.impact === \"medium\").length,\n  low: aiCountable.filter((x) => x.impact === \"low\").length,\n  obsolete: rawNorm.length - aiCountable.length,\n};\n\nconst content =\n  ($json.message && $json.message.content) ||\n  $json.content ||\n  $json.plan_json ||\n  {};\n\nconst srcSummary = typeof content.summary === \"string\" ? content.summary : \"\";\nconst srcPrioritized = Array.isArray(content.prioritized) ? content.prioritized : [];\nconst srcFixes = Array.isArray(content.fixes) ? content.fixes : [];\nconst srcQA = Array.isArray(content.qaChecklist) ? content.qaChecklist : [];\n\nconst prioritized = srcPrioritized.map((p) => ({\n  issueId: p.issueId || p.id || \"\",\n  wcag: Array.isArray(p.wcag) ? p.wcag : [],\n  impact: norm(p.impact),\n  effort: String(p.effort || \"\").toLowerCase(),\n}));\n\nconst fixes = srcFixes.map((f) => ({\n  target: f.target || f.selector || \"\",\n  description:\n    f.description || f.title || f.summary || f.issueId || f.id || f.fix || \"\",\n  codeExample: f.codeExample || f.code || f.snippet || f.example || \"\",\n}));\n\nconst qaChecklist = srcQA.map((x) =>\n  typeof x === \"string\"\n    ? x\n    : x.item || x.description || x.help || x.title || x.id || \"\"\n);\n\nreturn [\n  {\n    json: {\n      ...parseNode,\n      ...$json,\n      violations_count: counts.total,\n      high_impact_count: counts.high,\n      plan_json: {\n        summary: srcSummary,\n        prioritized,\n        fixes,\n        qaChecklist,\n      },\n    },\n    binary: $binary,\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -27072,
+        -1472
+      ],
+      "id": "e44b59c5-7e1a-4946-9d06-d0b660c9dbf6",
+      "name": "Format AI Response & Plan"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- retired criteria --------------------------------------------------------\n// W3C removed 4.1.1 Parsing in WCAG 2.2 and advises treating it as always\n// satisfied for HTML and XML content. HTML CodeSniffer still emits F77 for it.\n// On one live scan this inflated 31 real failures to 99.\n// https://www.w3.org/WAI/standards-guidelines/wcag/faq\nconst OBSOLETE_SC = [\"4.1.1\"];\n\nfunction scFromRuleId(id) {\n  const s = String(id || \"\");\n  let m = s.match(/Guideline\\d_\\d\\.(\\d)_(\\d)_(\\d+)/);\n  if (m) return m[1] + \".\" + m[2] + \".\" + m[3];\n  m = s.match(/\\b(\\d)\\.(\\d)\\.(\\d+)\\b/);\n  if (m) return m[1] + \".\" + m[2] + \".\" + m[3];\n  return null;\n}\n\nfunction isObsoleteFinding(v) {\n  if (v && v.isObsolete === true) return true;\n  const sc = (v && v.wcag_sc) || scFromRuleId(v && (v.id || v.code || v.rule));\n  return !!sc && OBSOLETE_SC.indexOf(sc) !== -1;\n}\n\nfunction esc(s) {\n  if (!s && s !== 0) return \"-\";\n  return String(s)\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .replace(/\"/g, \"&quot;\")\n    .replace(/'/g, \"&#039;\");\n}\n\nfunction normImpact(x) {\n  const v = String(x || \"\").toLowerCase();\n  if ([\"critical\", \"serious\", \"error\", \"high\"].includes(v)) return \"high\";\n  if ([\"moderate\", \"warning\", \"medium\", \"med\"].includes(v)) return \"medium\";\n  if ([\"minor\", \"notice\", \"low\"].includes(v)) return \"low\";\n  return \"-\";\n}\n\nfunction impactColor(v) {\n  if (v === \"high\") return \"#d32f2f\";\n  if (v === \"medium\") return \"#f57c00\";\n  if (v === \"low\") return \"#388e3c\";\n  return \"#555\";\n}\n\n// Get the scanned URL from scan_raw, not from $json.url which contains Cloudinary URL\nconst scannedUrl = $json.scan_raw?.url || $json.context?.url || $json.url || \"N/A\";\n\nconst aiMode = String($json.ai_mode || $env.AI_MODE || \"\").toUpperCase();\nconst aiEnabled = aiMode && aiMode !== \"OFF\";\n\nconst meta = $json.scan_raw?.testEngine || {};\nconst ts = $json.scan_raw?.timestamp\n  ? new Date($json.scan_raw.timestamp).toISOString()\n  : new Date().toISOString();\n\nconst engineName = String(meta.name || $env.SCAN_ENGINE || \"unknown\").toLowerCase();\n\nconst raw = Array.isArray($json.scan_raw?.violations) ? $json.scan_raw.violations : [];\n\nconst rawNorm = raw.map((x) => ({\n  id: x.id || x.rule || x.issueId || \"-\",\n  impact: normImpact(x.impact || x.type),\n  help: x.help || x.description || x.message || \"-\",\n  nodes: Array.isArray(x.nodes) ? x.nodes : [],\n  helpUrl: x.helpUrl || x.url || \"\",\n}));\n\n// Findings for retired criteria are reported separately and never counted as\n// conformance failures.\nconst countable = rawNorm.filter((x) => !isObsoleteFinding(x));\n\nconst counts = {\n  total: countable.length,\n  high: countable.filter((x) => x.impact === \"high\").length,\n  medium: countable.filter((x) => x.impact === \"medium\").length,\n  low: countable.filter((x) => x.impact === \"low\").length,\n  obsolete: rawNorm.length - countable.length,\n};\n\nconst grouped = countable.reduce((acc, x) => {\n  const key = x.id || \"-\";\n  if (!acc[key]) acc[key] = [];\n  acc[key].push(x);\n  return acc;\n}, {});\n\nconst groupedRows = Object.entries(grouped)\n  .map(([rule, items]) => {\n    const innerTableRows = items\n      .map((x) => {\n        const color = impactColor(x.impact);\n        const target = x?.nodes?.[0]?.target?.[0] ? esc(x?.nodes?.[0]?.target?.[0]) : \"-\";\n        return `\n          <tr>\n            <td style=\"color:${color};font-weight:bold;\">${esc(x.impact)}</td>\n            <td class=\"wrap-text\">${esc(x.help)}</td>\n            <td class=\"wrap-text\">${target}</td>\n          </tr>\n        `;\n      })\n      .join(\"\");\n\n    return `\n      <tr>\n        <td colspan=\"3\" class=\"details-container\">\n          <details>\n            <summary>${esc(rule)} (${items.length} issue${items.length > 1 ? \"s\" : \"\"})</summary>\n            <div class=\"details-content\">\n              <table class=\"nested-table\">\n                <thead>\n                  <tr>\n                    <th>Impact</th>\n                    <th>Help</th>\n                    <th>Target</th>\n                  </tr>\n                </thead>\n                <tbody>\n                  ${innerTableRows}\n                </tbody>\n              </table>\n            </div>\n          </details>\n        </td>\n      </tr>\n    `;\n  })\n  .join(\"\");\n\nconst prioritized = Array.isArray($json.plan_json?.prioritized) ? $json.plan_json.prioritized : [];\n\nconst prioritizedRows = prioritized.length\n  ? prioritized\n      .map((p) => {\n        const wcag = Array.isArray(p.wcag) ? p.wcag.join(\", \") : \"\";\n        const color = impactColor(p.impact);\n        return `\n          <tr>\n            <td>${esc(p.issueId || \"\")}</td>\n            <td>${esc(wcag)}</td>\n            <td style=\"color:${color};font-weight:bold;\">${esc(p.impact || \"-\")}</td>\n            <td>${esc(p.effort || \"-\")}</td>\n          </tr>\n        `;\n      })\n      .join(\"\")\n  : `<tr><td colspan=\"4\" style=\"text-align:center;color:#888;\">No prioritized items</td></tr>`;\n\nconst fixes = Array.isArray($json.plan_json?.fixes) ? $json.plan_json.fixes : [];\n\nconst fixesRows = fixes.length\n  ? fixes\n      .map((f) => {\n        const tgt = f.target ? `<div><b>Target:</b> ${esc(f.target)}</div>` : \"\";\n        const desc = f.description ? `<div>${esc(f.description)}</div>` : \"\";\n        const code = f.codeExample ? `<pre>${esc(f.codeExample)}</pre>` : \"<pre>-</pre>\";\n        return `\n          <tr>\n            <td>${tgt}${desc}</td>\n            <td>${code}</td>\n          </tr>\n        `;\n      })\n      .join(\"\")\n  : `<tr><td colspan=\"2\" style=\"text-align:center;color:#888;\">No AI fixes available</td></tr>`;\n\nconst qa = Array.isArray($json.plan_json?.qaChecklist) ? $json.plan_json.qaChecklist : [];\n\nconst qaRows = qa.length\n  ? qa\n      .map(\n        (x) => `\n        <tr>\n          <td>${esc(\n            typeof x === \"string\"\n              ? x\n              : x.item || x.description || x.help || x.title || x.id || \"-\"\n          )}</td>\n        </tr>\n      `\n      )\n      .join(\"\")\n  : `<tr><td style=\"text-align:center;color:#888;\">No QA checklist available</td></tr>`;\n\nconst sumText =\n  typeof $json.plan_json?.summary === \"string\" && $json.plan_json.summary\n    ? `<p>${esc($json.plan_json.summary)}</p>`\n    : \"\";\n\nconst summaryCounts = `\n  <table>\n    <tr>\n      <th>Total issues</th>\n      <th>High</th>\n      <th>Medium</th>\n      <th>Low</th>\n    </tr>\n    <tr>\n      <td>${counts.total}</td>\n      <td>${counts.high}</td>\n      <td>${counts.medium}</td>\n      <td>${counts.low}</td>\n    </tr>\n  </table>\n`;\n\nconst modeLabel = aiEnabled ? `AI (${esc(aiMode)})` : \"Rule-based (OFF)\";\n\nconst html =\n  \"<!doctype html>\" +\n  '<meta charset=\"utf-8\">' +\n  \"<title>Accessibility Report - \" +\n  esc(scannedUrl) +\n  \"</title>\" +\n  `<style>\n    body {\n      font-family: Arial, sans-serif;\n      color: #333;\n      margin: 20px;\n      line-height: 1.5;\n    }\n    h1, h2 {\n      color: #2c3e50;\n    }\n    h2 { margin-top: 30px; }\n    table {\n      border-collapse: collapse;\n      width: 100%;\n      margin-top: 15px;\n      table-layout: fixed;\n      word-wrap: break-word;\n    }\n    th, td {\n      border: 1px solid #ccc;\n      padding: 8px 10px;\n      text-align: left;\n      vertical-align: top;\n    }\n    th {\n      background: #f4f4f4;\n    }\n    .wrap-text {\n      white-space: normal;\n      word-break: break-word;\n    }\n    pre {\n      margin: 0;\n      white-space: pre-wrap;\n      word-wrap: break-word;\n      font-family: monospace;\n      background: #f9f9f9;\n      padding: 6px;\n      border-radius: 4px;\n      overflow-x: auto;\n    }\n    .info-box {\n      background: #f7faff;\n      border: 1px solid #cce5ff;\n      padding: 12px;\n      border-radius: 8px;\n      margin-bottom: 20px;\n    }\n    .ai-section {\n      background: #fffdf5;\n      border: 1px solid #ffe58f;\n      padding: 15px;\n      border-radius: 8px;\n      margin-top: 25px;\n    }\n    .ai-section h2 { color: #ad6800; }\n    summary {\n      font-weight: bold;\n      background: #f4f4f4;\n      padding: 10px;\n      cursor: pointer;\n      outline: none;\n      border-radius: 4px;\n    }\n    summary:hover {\n      background: #e9f3ff;\n    }\n    details {\n      border: 1px solid #ccc;\n      border-radius: 4px;\n      overflow: hidden;\n    }\n    details[open] summary {\n      border-bottom: 1px solid #ccc;\n    }\n    .details-container {\n      padding: 4px 0;\n      border: none;\n    }\n    .details-content {\n      padding: 10px;\n    }\n    .nested-table {\n      margin-top: 0;\n    }\n    .nested-table th {\n      background: #f9f9f9;\n    }\n    .nested-table tr:nth-child(even) {\n      background: #fff;\n    }\n  \n    @media print {\n      body { margin: 0; font-size: 11pt; }\n      details > *:not(summary) { display: block !important; }\n      details { border: 1px solid #ccc; page-break-inside: avoid; }\n      summary { cursor: default; background: #f4f4f4; }\n      h2, h3 { page-break-after: avoid; }\n      tr, pre { page-break-inside: avoid; }\n      td, pre { word-break: break-word; }\n      .info-box, .ai-section { page-break-inside: avoid; }\n      a[href]:after { content: \" (\" attr(href) \")\"; font-size: 9pt; color: #555; }\n    }\n</style>` +\n  \"<h1>Accessibility Report</h1>\" +\n  '<div class=\"info-box\">' +\n  \"<p><b>URL:</b> \" + esc(scannedUrl) + \"</p>\" +\n  \"<p><b>Run ID:</b> \" + esc($json.context?.run_id || \"-\") + \"</p>\" +\n  \"<p><b>Engine:</b> \" + esc(meta.name || engineName) + \" \" + esc(meta.version || \"\") + \"</p>\" +\n  \"<p><b>Mode:</b> \" + modeLabel + \"</p>\" +\n  \"<p><b>Timestamp:</b> \" + esc(ts) + \"</p>\" +\n  \"<p><b>Total Violations:</b> \" + counts.total + \" (\" + counts.high + \" high, \" + counts.medium + \" medium, \" + counts.low + \" low)</p>\" +\n  (aiEnabled ? \"<p><b>AI Prioritized:</b> \" + prioritized.length + \"</p>\" : \"\") +\n  \"</div>\" +\n  (counts.total === 0\n    ? '<div class=\"info-box\" style=\"border-color:#c3e6cb;background:#f0fff4;\">' +\n      '<p style=\"margin:0 0 8px;font-weight:bold;color:#1e7e34;\">No violations found</p>' +\n      '<p style=\"margin:0;\">This page passed all automated checks performed by ' +\n      esc(meta.name || engineName) + ' at the configured conformance level.</p>' +\n      '<p style=\"margin:8px 0 0;color:#555;font-size:13px;\">Automated testing detects a portion of ' +\n      'accessibility issues. Manual review is recommended to confirm full conformance.</p>' +\n      '</div>'\n    : \"<h2>Violations (grouped by rule)</h2>\" +\n      \"<table>\" +\n      groupedRows +\n      \"</table>\") +\n  (aiEnabled\n    ? '<div class=\"ai-section\">' +\n      \"<h2>AI Analysis</h2>\" +\n      \"<h3>Summary</h3>\" +\n      sumText +\n      summaryCounts +\n      \"<h3>Prioritized Overview</h3>\" +\n      \"<table><tr><th>issue_id</th><th>wcag</th><th>impact</th><th>effort</th></tr>\" +\n      prioritizedRows +\n      \"</table>\" +\n      \"<h3>Suggested Fixes</h3>\" +\n      \"<table><tr><th>Description/Target</th><th>Code Example</th></tr>\" +\n      fixesRows +\n      \"</table>\" +\n      \"<h3>QA Checklist</h3>\" +\n      \"<table><tr><th>Item</th></tr>\" +\n      qaRows +\n      \"</table>\" +\n      \"</div>\"\n    : \"\");\n\n\n\n\n// \u2500\u2500 Compliance / Jurisdictional Impact Section \u2500\u2500\nconst compliance = $json.compliance || {};\nconst compSummary = compliance.summary || {};\nconst byJurisdiction = compliance.byJurisdiction || {};\nconst compProfile = compliance.profileName || 'All Jurisdictions';\n\nlet complianceHtml = '';\nif (Object.keys(byJurisdiction).length > 0) {\n  let rows = '';\n  for (const [law, issues] of Object.entries(byJurisdiction)) {\n    const list = Array.isArray(issues) ? issues : [];\n    const total = list.length;\n    const high = list.filter(i => normImpact(i.impact) === 'high').length;\n    const medium = list.filter(i => normImpact(i.impact) === 'medium').length;\n    const low = list.filter(i => normImpact(i.impact) === 'low').length;\n\n    rows += '<tr>'\n      + '<td>' + esc(law) + '</td>'\n      + '<td>' + total + '</td>'\n      + '<td>' + high + '</td>'\n      + '<td>' + medium + '</td>'\n      + '<td>' + low + '</td>'\n      + '</tr>';\n  }\n\n  complianceHtml =\n    '<div class=\"ai-section\" style=\"border-color:#b7d4f7;background:#f0f7ff;\">'\n    + '<h2 style=\"color:#1a5276;\">Jurisdictional Compliance Impact</h2>'\n    + '<div class=\"info-box\">'\n    + '<p><b>Compliance Profile:</b> ' + esc(compProfile) + '</p>'\n    + '<p><b>Findings with Jurisdictional Impact:</b> '\n    + (compSummary.findingsWithJurisdictionalImpact || 0) + ' of '\n    + (compSummary.totalFindings || 0) + '</p>'\n    + '<p><b>Jurisdictions Affected:</b> '\n    + (compSummary.jurisdictionsAffected || 0) + '</p>'\n    + '</div>'\n    + '<h3>Findings by Jurisdiction</h3>'\n    + '<table><thead><tr>'\n    + '<th>Jurisdiction</th><th>Total issues</th><th>High</th><th>Medium</th><th>Low</th>'\n    + '</tr></thead><tbody>'\n    + rows\n    + '</tbody></table>'\n    + '</div>';\n}\n\n\n// Discovery summary and discovered URLs. Data is always carried through; this\n// controls rendering only. Hidden unless SHOW_DISCOVERY_IN_REPORT is true, or\n// the submitted payload sets showDiscovery.\nfunction discoveryHtml(json) {\n  const show =\n    String(json.context?.showDiscovery ?? $env.SHOW_DISCOVERY_IN_REPORT ?? \"false\")\n      .toLowerCase() === \"true\";\n  if (!show) return \"\";\n\n  const sum = json.discovery_summary || json.context?.discovery_summary || null;\n  const urls = json.discovered_urls || json.context?.discovered_urls || [];\n  const subs = json.discovered_subdomains || json.context?.discovered_subdomains || [];\n  if (!sum && urls.length === 0 && subs.length === 0) return \"\";\n\n  let html =\n    '<div class=\"ai-section\" style=\"border-color:#d6d8db;background:#fbfbfc;\">' +\n    '<h2 style=\"color:#495057;\">Discovered URLs and Subdomains</h2>' +\n    '<p>The following URLs and subdomains were identified within the website structure. ' +\n    'This list is provided for visibility into the broader digital footprint.</p>';\n\n  if (sum) {\n    html +=\n      '<div class=\"info-box\">' +\n      \"<p><b>URLs discovered:</b> \" + esc(sum.totalUrlsDiscovered ?? 0) + \"</p>\" +\n      \"<p><b>Subdomains discovered:</b> \" + esc(sum.totalSubdomainsDiscovered ?? 0) + \"</p>\" +\n      \"<p><b>Depth reached:</b> \" + esc(sum.depthReached ?? 0) + \"</p>\" +\n      (Array.isArray(sum.limitsHit) && sum.limitsHit.length\n        ? \"<p><b>Limits reached:</b> \" + esc(sum.limitsHit.join(\", \")) + \"</p>\"\n        : \"\") +\n      \"</div>\";\n  }\n\n  if (urls.length) {\n    html +=\n      \"<h3>URLs</h3><table><thead><tr><th>URL</th><th>In scope</th></tr></thead><tbody>\" +\n      urls.slice(0, 500).map(u =>\n        \"<tr><td>\" + esc(u.url) + \"</td><td>\" + (u.inScope ? \"Yes\" : \"No\") + \"</td></tr>\"\n      ).join(\"\") +\n      \"</tbody></table>\" +\n      (urls.length > 500 ? '<p style=\"color:#666;\">Showing the first 500 of ' + urls.length + \".</p>\" : \"\");\n  }\n\n  if (subs.length) {\n    html +=\n      \"<h3>Subdomains</h3><table><thead><tr><th>Subdomain</th><th>URL</th><th>Reachable</th></tr></thead><tbody>\" +\n      subs.map(sd =>\n        \"<tr><td>\" + esc(sd.subdomain) + \"</td><td>\" + esc(sd.url) + \"</td><td>\" +\n        (sd.reachable ? \"Yes\" : \"No\") + \"</td></tr>\"\n      ).join(\"\") +\n      \"</tbody></table>\";\n  }\n\n  html +=\n    '<p style=\"margin-top:14px;\"><b>The audit findings in this report apply only to the ' +\n    \"submitted URL or URLs.</b></p></div>\";\n\n  return html;\n}\n\n// Remediation details section from compliance package\nconst enrichedViolations = (Array.isArray($json.scan_raw?.violations) ? $json.scan_raw.violations : [])\n  .filter((v) => !isObsoleteFinding(v));\n\n// The remediation library does not cover every success criterion. Where it has\n// no entry, fall back to what the scanner itself reported so the section is\n// never silently missing. A report that lists problems without saying how to\n// address them is the part a reader actually needs.\nconst remediationEntries = enrichedViolations.map(v => {\n  if (v.remediationDetails) return v;\n  const scLabel = v.wcag_sc || '-';\n  const help = String(v.help || v.description || v.message || '').trim();\n  return {\n    ...v,\n    remediationDetails: {\n      title: v.scDescription || 'Guidance from the scan engine',\n      whyItMatters: help || 'This element does not meet the requirements of this success criterion.',\n      howToFix: [],\n      codeExample: null,\n      fromScanner: true,\n      referenceUrl: 'https://www.w3.org/WAI/WCAG22/Understanding/'\n    }\n  };\n});\n\nlet remediationHtml = '';\nif (remediationEntries.length > 0) {\n\n// Concrete, per element actions. The scanner already reports the exact element\n// and often the exact change to make. Grouping identical instructions means a\n// reader sees each distinct action once, with every element it applies to.\nfunction actionTable(actions) {\n  if (!Array.isArray(actions) || actions.length === 0) return '';\n\n  const byFix = new Map();\n  actions.forEach(a => {\n    const key = a.fix || 'See the criterion reference for this issue';\n    if (!byFix.has(key)) byFix.set(key, []);\n    byFix.get(key).push(a.target);\n  });\n\n  const rows = Array.from(byFix.entries()).map(([fix, targets]) => {\n    const shown = targets.slice(0, 12);\n    const extra = targets.length - shown.length;\n    const list = shown.map(t => '<code>' + esc(t) + '</code>').join('<br>') +\n      (extra > 0 ? '<br><span style=\"color:#666;\">and ' + extra + ' more</span>' : '');\n    return '<tr><td style=\"width:50%;\">' + esc(fix) + '</td>' +\n           '<td style=\"font-size:12px;\">' + list + '</td>' +\n           '<td style=\"text-align:right;width:12%;\">' + targets.length + '</td></tr>';\n  }).join('');\n\n  return '<p><b>Apply these changes:</b></p>' +\n    '<table class=\"nested-table\"><thead><tr>' +\n    '<th>What to change</th><th>Elements</th><th style=\"text-align:right;\">Count</th>' +\n    '</tr></thead><tbody>' + rows + '</tbody></table>';\n}\n\n  // Group by success criterion. Guidance for a criterion is identical for every\n  // finding that breaks it, so one block per criterion is shown with a count\n  // rather than one block per finding. Findings scale, guidance does not.\n  const byCriterion = new Map();\n  remediationEntries.forEach(v => {\n    const key = String(v.wcag_sc || '-');\n    if (!byCriterion.has(key)) {\n      byCriterion.set(key, { rd: v.remediationDetails, count: 0, high: 0, actions: [] });\n    }\n    const entry = byCriterion.get(key);\n    entry.count += 1;\n    if (normImpact(v.impact || v.type) === 'high') entry.high += 1;\n    if (v.elementTarget || v.specificFix) {\n      entry.actions.push({\n        target: v.elementTarget || '-',\n        // Prefer the concrete value the scanner reported. Where there is none,\n        // use its description of the problem, which still differs per issue and\n        // must not be collapsed with unrelated findings under the same criterion.\n        fix: v.specificFix || String(v.help || v.description || v.message || '').trim() || null,\n        impact: normImpact(v.impact || v.type)\n      });\n    }\n  });\n\n  // Most severe first, then most frequent.\n  const ordered = Array.from(byCriterion.entries()).sort((a, b) => {\n    if (b[1].high !== a[1].high) return b[1].high - a[1].high;\n    return b[1].count - a[1].count;\n  });\n\n  const summaryRows = ordered.map(([sc, e]) =>\n    '<tr><td>WCAG ' + esc(sc) + ', ' + esc(e.rd.title || '-') + '</td>' +\n    '<td style=\"text-align:right;\">' + e.count + '</td>' +\n    '<td style=\"text-align:right;\">' + e.high + '</td></tr>'\n  ).join('');\n\n  const remSummary =\n    '<table><thead><tr>' +\n    '<th>Criterion</th><th style=\"text-align:right;\">Findings</th><th style=\"text-align:right;\">High</th>' +\n    '</tr></thead><tbody>' + summaryRows + '</tbody></table>';\n\n  const remRows = ordered.map(([sc, e]) => {\n    const rd = e.rd;\n    const howToFix = Array.isArray(rd.howToFix) ? rd.howToFix.map(h => '<li>' + esc(h) + '</li>').join('') : '';\n    const label = e.count === 1 ? '1 finding' : e.count + ' findings';\n    const obsoleteTag = rd.obsolete\n      ? ' <span style=\"font-weight:normal;color:#1e7e34;\">(criterion obsolete, not a conformance failure)</span>'\n      : '';\n    return '<tr><td colspan=\"2\" class=\"details-container\">' +\n      '<details><summary>WCAG ' + esc(sc) + ', ' + esc(rd.title || '-') +\n      ' <span style=\"font-weight:normal;color:#666;\">(' + label + ')</span>' + obsoleteTag + '</summary>' +\n      '<div class=\"details-content\">' +\n      // Plain language first, so a non specialist reader starts with the point.\n      // An authored line takes precedence; otherwise the W3C guideline text is\n      // used, which is already written plainly and needs no authoring.\n      (rd.plainLanguage\n        ? '<p>' + esc(rd.plainLanguage) + '</p>'\n        : (rd.guidelineIntent ? '<p>' + esc(rd.guidelineIntent) + '</p>' : '')) +\n      (rd.requirement\n        ? '<p><b>What WCAG requires:</b> ' + esc(rd.requirement) + '</p>' +\n          (Array.isArray(rd.exceptions) && rd.exceptions.length\n            ? '<p><b>Exceptions:</b></p><ul>' +\n              rd.exceptions.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>'\n            : '')\n        : '<p><b>Why it matters:</b> ' + esc(rd.whyItMatters || '') + '</p>') +\n      (Array.isArray(rd.sufficientTechniques) && rd.sufficientTechniques.length\n        ? '<p><b>Sufficient techniques published by W3C:</b></p><ul>' +\n          rd.sufficientTechniques.slice(0, 10).map(t =>\n            '<li><a href=\"' + esc(t.url) + '\">' + esc(t.id) + '</a> ' + esc(t.title) + '</li>'\n          ).join('') +\n          (rd.sufficientTechniques.length > 10\n            ? '<li style=\"color:#666;\">and ' + (rd.sufficientTechniques.length - 10) + ' more</li>'\n            : '') +\n          '</ul>'\n        : '') +\n      (Array.isArray(rd.commonFailures) && rd.commonFailures.length\n        ? '<p><b>Documented failures for this criterion:</b></p><ul>' +\n          rd.commonFailures.slice(0, 8).map(t =>\n            '<li><a href=\"' + esc(t.url) + '\">' + esc(t.id) + '</a> ' + esc(t.title) + '</li>'\n          ).join('') + '</ul>'\n        : '') +\n      (howToFix ? '<p><b>How to fix:</b></p><ul>' + howToFix + '</ul>' : '') +\n      (rd.understandingUrl\n        ? '<p><a href=\"' + esc(rd.understandingUrl) + '\">Understanding this criterion (W3C)</a></p>'\n        : '') +\n      (rd.fromScanner\n        ? '<p style=\"color:#666;font-size:13px;\">Detailed guidance for this criterion is not yet in the remediation library. ' +\n          'The description above is reported by the scan engine. See ' +\n          '<a href=\"https://www.w3.org/WAI/WCAG22/Understanding/\">Understanding WCAG</a> for the full criterion.</p>'\n        : '') +\n      (rd.codeExample ? '<p><b>Code example:</b></p><pre>' + esc(rd.codeExample) + '</pre>' : '') +\n      actionTable(e.actions) +\n      '</div></details></td></tr>';\n  }).join('');\n\n  remediationHtml = '<div class=\"ai-section\" style=\"border-color:#c3e6cb;background:#f0fff4;\">' +\n    '<h2 style=\"color:#1e7e34;\">Remediation Guidance</h2>' +\n    '<p style=\"font-size:13px;color:#555;margin-top:0;\">Requirement text, techniques and ' +\n    'documented failures are from the Web Content Accessibility Guidelines and Techniques ' +\n    'for WCAG, Copyright World Wide Web Consortium, reproduced without alteration under the ' +\n    '<a href=\"https://www.w3.org/copyright/document-license/\">W3C Document License</a>.</p>' +\n    remSummary +\n    '<table>' + remRows + '</table>' +\n    '</div>';\n}\n\n\n// Append compliance and remediation sections to the HTML\nconst fullHtml = html + complianceHtml + remediationHtml + discoveryHtml($json);\n\nconst printScript =\n  '<script>window.addEventListener(\"beforeprint\",function(){' +\n  'document.querySelectorAll(\"details\").forEach(function(d){d.open=true;});' +\n  '});<\\/script>';\n\nconst buffer = Buffer.from(fullHtml + printScript, \"utf8\");\n\nreturn [\n  {\n    json: { ...$json },\n    binary: {\n      report: {\n        data: buffer.toString(\"base64\"),\n        fileName: `${engineName}-report-${$json.id || Date.now()}.html`,\n        mimeType: \"text/html\",\n      },\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -26400,
+        -1296
+      ],
+      "id": "5c4d4db0-e40b-4971-af16-d4cf5f7b1827",
+      "name": "Build HTML Report"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME) && $env.STORAGE_API_BASE ? `${$env.STORAGE_API_BASE}/${$env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME}${$env.STORAGE_UPLOAD_PATH || \"/raw/upload\"}` : '' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "upload_preset",
+              "value": "={{ $env.STORAGE_UPLOAD_PRESET || \"n8n_reports\" }}"
+            },
+            {
+              "name": "public_id",
+              "value": "=reports/html/{{ $binary.report.fileName.replace('.html', '') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "=report"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -26176,
+        -1152
+      ],
+      "id": "72e562e2-3f28-4e4c-863a-cb138fe8d400",
+      "name": "Upload HTML Report to Cloudinary",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_ACCESSIBILITY_RESULTS_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_SHEET_REPORTS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id\u00a0": "={{ $json.id }}",
+            "url\u00a0": "={{ $json.url }}",
+            "violations_count\u00a0": "={{ $json.violations_count }}",
+            "high_impact_count\u00a0": "={{ $json.high_impact_count }}",
+            "summary\u00a0": "={{ $json.plan_json.summary }}",
+            "plan_json\u00a0": "={{ JSON.stringify($json.plan_json) }}",
+            "run_id\u00a0": "={{ $json.context.run_id }}",
+            "created_at\u00a0": "={{ $json.scan_raw?.timestamp ? new Date($json.scan_raw.timestamp).toISOString() : new Date().toISOString() }}",
+            "engine\u00a0": "={{ $env.SCAN_ENGINE.toUpperCase() }}",
+            "report_link\u00a0": "={{ $json.report_link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "id\u00a0",
+              "displayName": "id\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url\u00a0",
+              "displayName": "url\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "engine\u00a0",
+              "displayName": "engine\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "violations_count\u00a0",
+              "displayName": "violations_count\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "high_impact_count\u00a0",
+              "displayName": "high_impact_count\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary\u00a0",
+              "displayName": "summary\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "plan_json\u00a0",
+              "displayName": "plan_json\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "report_link\u00a0",
+              "displayName": "report_link\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "run_id\u00a0",
+              "displayName": "run_id\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at\u00a0",
+              "displayName": "created_at\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -24608,
+        -1296
+      ],
+      "id": "87bf1a75-0bd5-43b5-95fe-8559f3de6753",
+      "name": "Save Report Metadata to Sheets",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DzNhHwxMPqOC26xb",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "SHEETS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "bfbc4424-c1a7-4cc0-887d-5aa252198a3b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SHEETS"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0dbf1485-8171-4f27-ba03-5a7080eae266",
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "AIRTABLE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AIRTABLE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "bcd4c46d-0f86-40f7-b9c6-3503daa8b2d6",
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "CSV",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CSV"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "61a7b84c-b453-45d4-9f5a-064d7bdf159f",
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "S3",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "S3"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 0
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -25280,
+        -1328
+      ],
+      "id": "5db3dad9-790b-4189-a3e9-f360fc9d4d75",
+      "name": "Choose Storage Target"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b4e9032a-5e9a-4027-b6f7-8d08e8504a9a",
+              "name": "id",
+              "value": "={{$json.id || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "83e0462a-54e3-4d7f-ac73-9d696ef50511",
+              "name": "url",
+              "value": "={{$json.url || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "04351066-39cb-4505-8759-6d79637750f0",
+              "name": "engine",
+              "value": "={{$json.engine || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "40a7b944-a42e-4d77-b0c4-e9c057e94eab",
+              "name": "violations_count",
+              "value": "={{$json.violations_count || 0}}",
+              "type": "number"
+            },
+            {
+              "id": "7fbeba0d-b10d-4049-8973-c95364551d88",
+              "name": "high_impact_count",
+              "value": "={{$json.high_impact_count || 0}}",
+              "type": "number"
+            },
+            {
+              "id": "dc356054-012c-494d-8e1f-5b9603532a0a",
+              "name": "summary",
+              "value": "={{$json.plan_json.summary || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "de00dc94-922c-4046-b07a-7657bd0f6e97",
+              "name": "plan_json",
+              "value": "={{$json.plan_json ? JSON.stringify($json.plan_json) : ''}}",
+              "type": "string"
+            },
+            {
+              "id": "d3811a2d-581a-4632-9737-96fd2a418bbf",
+              "name": "report_link",
+              "value": "={{ $json.report_link }}",
+              "type": "string"
+            },
+            {
+              "id": "6d53b936-b162-4925-bf8d-c5a708cfea1b",
+              "name": "run_id",
+              "value": "={{$json.context.run_id || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "bc6fbc52-ba44-4221-bed0-68712be49b23",
+              "name": "created_at",
+              "value": "={{ $json.scan_raw?.timestamp ? new Date($json.scan_raw.timestamp).toISOString() : new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -22816,
+        -1664
+      ],
+      "id": "8100ed9f-e85a-4468-849c-4d149d154295",
+      "name": "Prepare CSV Metadata Row"
+    },
+    {
+      "parameters": {
+        "fileSelector": "/data/reports/csv/reports.csv",
+        "options": {
+          "dataPropertyName": "reports"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -22592,
+        -1664
+      ],
+      "id": "19af9aba-66d3-48fa-a4bd-ecfcfd3f6e91",
+      "name": "Read Local Reports CSV",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b5fa7d2c-2734-4e2c-8694-45be59c9068a",
+              "leftValue": "={{ !!Object.keys($binary).length }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -22368,
+        -1664
+      ],
+      "id": "48e65b8d-8ed6-4571-a598-bddab2a26c5a",
+      "name": "Check Reports CSV Exists"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst headers = [\n  \"id\",\n  \"url\",\n  \"engine\",\n  \"violations_count\",\n  \"high_impact_count\",\n  \"summary\",\n  \"plan_json\",\n  \"report_link\",\n  \"run_id\",\n  \"created_at\"\n];\n\nfunction escapeCsv(value) {\n  if (value == null) return \"\";\n  let str = String(value);\n  if (str.includes('\"') || str.includes(',') || str.includes('\\n')) {\n    str = '\"' + str.replace(/\"/g, '\"\"') + '\"';\n  }\n  return str;\n}\n\nconst headerRow = headers.join(\",\");\nconst rows = items.map(item => headers.map(h => escapeCsv(item[h])).join(\",\"));\nconst csvString = [headerRow, ...rows].join(\"\\n\");\n\nreturn [{\n  binary: {\n    reports: {\n      data: Buffer.from(csvString).toString('base64'),\n      mimeType: 'text/csv',\n      fileName: 'reports.csv'\n    }\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -24384,
+        -624
+      ],
+      "id": "73cc0ed4-2f9a-45be-b4fd-021bf6eec3bc",
+      "name": "Build CSV Rows (Append)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.all();\n\nlet csvLines = [];\nfor (const i of input) {\n  if (i.json.data) {\n    csvLines.push(i.json.data.trim());\n  }\n}\n\nconst csvString = csvLines.join(\"\\n\");\n\nreturn [\n  {\n    binary: {\n      reports: {\n        data: Buffer.from(csvString, \"utf8\").toString(\"base64\"),\n        fileName: \"reports.csv\",\n        mimeType: \"text/csv\",\n      },\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -23936,
+        -912
+      ],
+      "id": "76b31dc8-9f31-4b20-b765-2c1575a6a9c5",
+      "name": "Assemble CSV Binary (Append)"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/data/reports/csv/reports.csv",
+        "dataPropertyName": "reports",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -21696,
+        -1536
+      ],
+      "id": "7b2b5229-518b-43be-807d-a27cea62b2da",
+      "name": "Write Reports CSV (Local)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME) && $env.STORAGE_API_BASE ? `${$env.STORAGE_API_BASE}/${$env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME}${$env.STORAGE_UPLOAD_PATH || \"/raw/upload\"}` : '' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "upload_preset",
+              "value": "={{ $env.STORAGE_UPLOAD_PRESET || \"n8n_reports\" }}"
+            },
+            {
+              "name": "public_id",
+              "value": "=reports/csv/{{ $binary.reports.fileName.replace('.csv', '') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "=reports"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -23712,
+        -912
+      ],
+      "id": "0c7ebfe5-79dd-4f8c-b260-7bd09984f8d2",
+      "name": "Upload Reports CSV to Cloudinary (New File)",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME) && $env.STORAGE_API_BASE ? `${$env.STORAGE_API_BASE}/${$env.STORAGE_ACCOUNT || $env.CLOUDINARY_CLOUD_NAME}${$env.STORAGE_UPLOAD_PATH || \"/raw/upload\"}` : '' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "upload_preset",
+              "value": "={{ $env.STORAGE_UPLOAD_PRESET || \"n8n_reports\" }}"
+            },
+            {
+              "name": "public_id",
+              "value": "=reports/csv/{{ $binary.reports.fileName.replace('.csv', '') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "=reports"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -23712,
+        -624
+      ],
+      "id": "3ea2783c-51bf-4fe7-9cb5-a3a8c4fc7a24",
+      "name": "Upload CSV to Cloudinary (Append)",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -24160,
+        -912
+      ],
+      "id": "3e8aa8c4-be1b-446a-9eef-0ff61b8daf18",
+      "name": "Merge New vs Existing CSV Rows"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -24832,
+        -624
+      ],
+      "id": "99925a5b-df0d-42ac-927b-a302752a9e12",
+      "name": "Decide CSV Append vs New"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -22144,
+        -1536
+      ],
+      "id": "c78487db-8c06-4ee1-bebd-e2cc1aa72d64",
+      "name": "Merge CSV Branches (Append Mode)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b4e9032a-5e9a-4027-b6f7-8d08e8504a9a",
+              "name": "id",
+              "value": "={{$json.id || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "83e0462a-54e3-4d7f-ac73-9d696ef50511",
+              "name": "url",
+              "value": "={{$json.url || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "04351066-39cb-4505-8759-6d79637750f0",
+              "name": "engine",
+              "value": "={{$json.engine || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "40a7b944-a42e-4d77-b0c4-e9c057e94eab",
+              "name": "violations_count",
+              "value": "={{$json.violations_count || 0}}",
+              "type": "number"
+            },
+            {
+              "id": "7fbeba0d-b10d-4049-8973-c95364551d88",
+              "name": "high_impact_count",
+              "value": "={{$json.high_impact_count || 0}}",
+              "type": "number"
+            },
+            {
+              "id": "dc356054-012c-494d-8e1f-5b9603532a0a",
+              "name": "summary",
+              "value": "={{$json.plan_json.summary || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "de00dc94-922c-4046-b07a-7657bd0f6e97",
+              "name": "plan_json",
+              "value": "={{$json.plan_json ? JSON.stringify($json.plan_json) : ''}}",
+              "type": "string"
+            },
+            {
+              "id": "d3811a2d-581a-4632-9737-96fd2a418bbf",
+              "name": "report_link",
+              "value": "={{ $json.report_link }}",
+              "type": "string"
+            },
+            {
+              "id": "6d53b936-b162-4925-bf8d-c5a708cfea1b",
+              "name": "run_id",
+              "value": "={{$json.context.run_id || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "bc6fbc52-ba44-4221-bed0-68712be49b23",
+              "name": "created_at",
+              "value": "={{ $json.scan_raw?.timestamp ? new Date($json.scan_raw.timestamp).toISOString() : new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -24608,
+        -624
+      ],
+      "id": "bd0271a5-65f4-42eb-9ab1-3ba3a861cd15",
+      "name": "Prepare Row for Missing Record"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b4e9032a-5e9a-4027-b6f7-8d08e8504a9a",
+              "name": "id",
+              "value": "={{$json.id || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "83e0462a-54e3-4d7f-ac73-9d696ef50511",
+              "name": "url",
+              "value": "={{$json.url || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "04351066-39cb-4505-8759-6d79637750f0",
+              "name": "engine",
+              "value": "={{$json.engine || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "40a7b944-a42e-4d77-b0c4-e9c057e94eab",
+              "name": "violations_count",
+              "value": "={{$json.violations_count || 0}}",
+              "type": "number"
+            },
+            {
+              "id": "7fbeba0d-b10d-4049-8973-c95364551d88",
+              "name": "high_impact_count",
+              "value": "={{$json.high_impact_count || 0}}",
+              "type": "number"
+            },
+            {
+              "id": "dc356054-012c-494d-8e1f-5b9603532a0a",
+              "name": "summary",
+              "value": "={{$json.plan_json.summary || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "de00dc94-922c-4046-b07a-7657bd0f6e97",
+              "name": "plan_json",
+              "value": "={{$json.plan_json ? JSON.stringify($json.plan_json) : ''}}",
+              "type": "string"
+            },
+            {
+              "id": "d3811a2d-581a-4632-9737-96fd2a418bbf",
+              "name": "report_link",
+              "value": "={{ $json.report_link }}",
+              "type": "string"
+            },
+            {
+              "id": "6d53b936-b162-4925-bf8d-c5a708cfea1b",
+              "name": "run_id",
+              "value": "={{$json.context.run_id || ''}}",
+              "type": "string"
+            },
+            {
+              "id": "bc6fbc52-ba44-4221-bed0-68712be49b23",
+              "name": "created_at",
+              "value": "={{ $json.scan_raw?.timestamp ? new Date($json.scan_raw.timestamp).toISOString() : new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -24608,
+        -848
+      ],
+      "id": "645f87ff-ed09-4dea-9641-6b76dad75b66",
+      "name": "Prepare Row for Existing Record"
+    },
+    {
+      "parameters": {
+        "jsCode": "const notifyEnv = $env.NOTIFY_CHANNELS || \"\";\n\nif (!notifyEnv.trim()) {\n  return [];\n}\n\nconst channels = notifyEnv.split(\",\").map(x => x.trim()).filter(Boolean);\nreturn channels.map(c => ({ json: { channel: c } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -21024,
+        -2112
+      ],
+      "id": "46f2b5b0-9071-4b7e-9ad1-c0fea99f9482",
+      "name": "Prepare Notification Targets",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1a96e9f1-c634-461e-af04-62a6a5b0bea5"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "email"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "79c0c881-a7a8-490d-98f6-79aac5959983",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "slack",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "slack"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "92f51215-7692-44fe-ab06-1ea0557797d6",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "sms",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sms"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8500cc59-39e7-4018-82da-deec4b83b7dc",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "crm",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "crm"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -20800,
+        -2160
+      ],
+      "id": "c45487d6-2320-4dc8-89cb-d4abb1589fce",
+      "name": "Choose Notification Channel"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "reports",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -21920,
+        -2112
+      ],
+      "id": "743d01df-9832-4586-a1e5-162d7714cc87",
+      "name": "Extract CSV from File"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -24832,
+        -848
+      ],
+      "id": "be89d085-6222-4f65-bf53-3de83070b19c",
+      "name": "Merge Report Sources"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -22144,
+        -2112
+      ],
+      "id": "79de7183-d69c-4f0f-b313-3f4958b77e89",
+      "name": "Merge Notifications Branch"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -25504,
+        -1296
+      ],
+      "id": "094ea78f-871b-433c-b74f-0b85c58fade4",
+      "name": "Attach Report UUID"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawHost = $env.N8N_HOST || \"localhost\";\nconst port = $env.N8N_PORT || \"5678\";\n\nconst hasScheme = /^https?:\\/\\//i.test(rawHost);\n\nlet scheme;\nif (hasScheme) {\n  scheme = \"\";\n} else if (rawHost.includes(\"localhost\")) {\n  scheme = \"http://\";\n} else {\n  scheme = \"https://\";\n}\n\nconst host = rawHost.replace(/\\/+$/, \"\");\n\nlet baseUrl;\nif (!port || port === \"80\" || port === \"443\") {\n  baseUrl = `${scheme}${host}`;\n} else {\n  baseUrl = `${scheme}${host}:${port}`;\n}\n\nreturn [\n  {\n    json: {\n      workflow: {\n        id: $workflow.id,\n        name: $workflow.name,\n      },\n      execution: {\n        id: $execution.id,\n        url: `${baseUrl}/execution/workflow/${$workflow.id}/${$execution.id}`,\n        retryOf: null,\n        error: {\n          name: $json.error?.name || \"AIProviderError\",\n          message:\n            $json.error?.message ||\n            \"Failed to generate AI remediation plan.\",\n          stack: $json.error?.stack || \"\",\n          timestamp: new Date().toISOString(),\n        },\n        lastNodeExecuted: $json.node?.name || \"AI remediation plan node (provider not reported)\",\n        mode: $execution.mode,\n      },\n      run_id: $json.run_id || $json.context?.run_id || null,\n      timestamp: new Date().toISOString(),\n      url: $json.url || null,\n      error_message: $json.error?.message || \"Unknown AI provider error\",\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -27520,
+        -784
+      ],
+      "id": "6f829713-378a-4598-8d13-9a375ba65a36",
+      "name": "Handle OpenAI Error Metadata"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -25952,
+        -1232
+      ],
+      "id": "fc56ac77-3ddb-4317-8637-afce4549bb92",
+      "name": "Merge Report ID + Report Link"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "JEIdCUjXGGR5sBi6",
+          "mode": "list",
+          "cachedResultName": "error reusable"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -27296,
+        -784
+      ],
+      "id": "c872f7b9-cee7-4293-8fff-95372d9d736a",
+      "name": "Run Sub-Workflow: OpenAI Error Notifier",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -23040,
+        -816
+      ],
+      "id": "77e7e6c0-38cb-4704-83fa-8a26ee9f1f40",
+      "name": "Branch S3 Error Handling"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "JEIdCUjXGGR5sBi6",
+          "mode": "list",
+          "cachedResultName": "error reusable"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -23264,
+        -816
+      ],
+      "id": "c4768319-32b8-4b66-9d70-4d65f71534c3",
+      "name": "Run Sub-Workflow: S3 Error Notifier",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "JEIdCUjXGGR5sBi6",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/JEIdCUjXGGR5sBi6",
+          "cachedResultName": "error reusable"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -24160,
+        -1232
+      ],
+      "id": "8392a55f-b537-4720-9bf3-0566211b01df",
+      "name": "Run Sub-Workflow: Sheets Error Notifier",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawHost = $env.N8N_HOST || \"localhost\";\nconst port = $env.N8N_PORT || \"5678\";\n\nconst hasScheme = /^https?:\\/\\//i.test(rawHost);\n\nlet scheme;\nif (hasScheme) {\n  scheme = \"\";\n} else if (rawHost.includes(\"localhost\")) {\n  scheme = \"http://\";\n} else {\n  scheme = \"https://\";\n}\n\nconst host = rawHost.replace(/\\/+$/, \"\");\n\nlet baseUrl;\nif (!port || port === \"80\" || port === \"443\") {\n  baseUrl = `${scheme}${host}`;\n} else {\n  baseUrl = `${scheme}${host}:${port}`;\n}\n\nreturn [\n  {\n    json: {\n      workflow: {\n        id: $workflow.id,\n        name: $workflow.name,\n      },\n      execution: {\n        id: $execution.id,\n        url: `${baseUrl}/execution/workflow/${$workflow.id}/${$execution.id}`,\n        retryOf: null,\n        error: {\n          name: $json.error?.name || \"NodeApiError\",\n          message:\n            $json.error?.message ||\n            \"Failed to write to Google Sheets. Falling back to CSV.\",\n          stack: $json.error?.stack || \"\",\n          timestamp: new Date().toISOString(),\n        },\n        lastNodeExecuted: $json.node?.name || \"Save Report Metadata to Sheets\",\n        mode: $execution.mode,\n      },\n      run_id: $json.run_id || $json.context?.run_id || null,\n      timestamp: new Date().toISOString(),\n      url: $json.url || null,\n      error_message: $json.error?.message || \"Unknown error\",\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -24384,
+        -1232
+      ],
+      "id": "f99edd5d-ff08-48b5-b8f3-0048ef41b1d8",
+      "name": "Handle Sheets Error Metadata"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawHost = $env.N8N_HOST || \"localhost\";\nconst port = $env.N8N_PORT || \"5678\";\n\nconst hasScheme = /^https?:\\/\\//i.test(rawHost);\n\nlet scheme;\nif (hasScheme) {\n  scheme = \"\";\n} else if (rawHost.includes(\"localhost\")) {\n  scheme = \"http://\";\n} else {\n  scheme = \"https://\";\n}\n\nconst host = rawHost.replace(/\\/+$/, \"\");\n\nlet baseUrl;\nif (!port || port === \"80\" || port === \"443\") {\n  baseUrl = `${scheme}${host}`;\n} else {\n  baseUrl = `${scheme}${host}:${port}`;\n}\n\nreturn [\n  {\n    json: {\n      workflow: {\n        id: $workflow.id,\n        name: $workflow.name,\n      },\n      execution: {\n        id: $execution.id,\n        url: `${baseUrl}/execution/workflow/${$workflow.id}/${$execution.id}`,\n        retryOf: null,\n        error: {\n          name: $json.error?.name || \"NodeApiError\",\n          message:\n            $json.error?.message ||\n            \"Failed to upload the reports CSV to Cloudinary. Falling back to CSV.\",\n          stack: $json.error?.stack || \"\",\n          timestamp: new Date().toISOString(),\n        },\n        lastNodeExecuted: $json.node?.name || \"Cloudinary reports-CSV upload node (variant not reported)\",\n        mode: $execution.mode,\n      },\n      run_id: $json.run_id || $json.context?.run_id || null,\n      timestamp: new Date().toISOString(),\n      url: $json.url || null,\n      error_message: $json.error?.message || \"Unknown error\",\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -23488,
+        -816
+      ],
+      "id": "147e6ae2-0867-42bc-a4b4-53523cbc69e6",
+      "name": "Handle S3 Upload Error Metadata"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -23936,
+        -1728
+      ],
+      "id": "0a1c639d-c0cf-45bf-a494-1c5e9d8e2236",
+      "name": "Branch AI Error Handling"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map((i) => i.json);\n\nconst headers = [\n  \"id\",\n  \"url\",\n  \"engine\",\n  \"violations_count\",\n  \"high_impact_count\",\n  \"summary\",\n  \"plan_json\",\n  \"report_link\",\n  \"run_id\",\n  \"created_at\",\n];\n\nfunction esc(val) {\n  if (val === null || val === undefined) return \"\";\n  const str = String(val);\n  return `\"${str.replace(/\"/g, '\"\"').replace(/\\n/g, \" \")}\"`;\n}\n\nconst rows = items.map((row) => headers.map((h) => esc(row[h])).join(\",\"));\n\nconst csvString = [headers.join(\",\"), ...rows].join(\"\\n\");\n\nreturn [\n  {\n    binary: {\n      reports: {\n        data: Buffer.from(csvString, \"utf8\").toString(\"base64\"),\n        fileName: \"reports.csv\",\n        mimeType: \"text/csv\",\n      },\n    },\n    json: {\n      rows_count: items.length,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -21472,
+        -2112
+      ],
+      "id": "503154a7-4e3b-4b4c-9da6-91e648d8c1fc",
+      "name": "Build New Local CSV"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/data/reports/csv/reports.csv",
+        "dataPropertyName": "reports",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -21248,
+        -2112
+      ],
+      "id": "c505f331-cbe3-4775-8407-857dd032ce09",
+      "name": "Append New Data + Write Local CSV (reports.csv)"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -20576,
+        -2048
+      ],
+      "id": "d475022f-c547-430c-bddf-0a429202d052",
+      "name": "Branch Notification Email"
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {\n    const r = (Math.random() * 16) | 0;\n    const v = c === 'x' ? r : (r & 0x3) | 0x8;\n    return v.toString(16);\n  });\n}\n\n\nreturn items.map((item) => ({\n  json: {\n    ...item.json,\n    id: uuidv4(),\n  },\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -26848,
+        -1296
+      ],
+      "id": "1c311408-65d4-4b8b-a264-539b91edd6c2",
+      "name": "Assign Report ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "let vNode = {};\nlet aiCost = 0;\n\ntry {\n  vNode = $node[\"Attach Report UUID\"]?.json || {};\n} catch (e) {\n  vNode = {};\n}\n\ntry {\n  aiCost = Number($node[\"Parse AI Response + Cost\"]?.json?.ai_cost_usd || 0);\n} catch (e) {\n  aiCost = 0;\n}\n\nconst errorNotes = [];\n[\n  \"Execute AXE Scan\",\n  \"Execute PA11Y Scan\",\n  \"Parse AXE Output\",\n  \"Parse PA11Y Output\",\n  \"Build HTML Report\",\n  \"Upload HTML Report to Cloudinary\",\n  \"Save Report Metadata to Sheets\",\n  \"Upload CSV to Cloudinary (Append)\",\n  \"Upload Reports CSV to Cloudinary (New File)\",\n  \"Assemble CSV Binary (Append)\"\n].forEach(n => {\n  try {\n    const e = $node[n]?.json?.error;\n    if (e) errorNotes.push(`${n}: ${e.message || e.description || String(e)}`);\n  } catch (err) {\n  }\n});\n\nconst failed = errorNotes.length > 0 ? 1 : 0;\n\nreturn [{\n  json: {\n    run_id: vNode.context?.run_id || \"\",\n    started_at: vNode.context?.started_at || \"\",\n    url: vNode.url || \"\",\n    violations: Number(vNode.violations_count || 0),\n    high_impact: Number(vNode.high_impact_count || 0),\n    ai_cost_usd: aiCost,\n    failures: failed,\n    notes: errorNotes.join(\" | \").slice(0, 900),\n    compliance_profile: vNode.compliance?.profile || \"\",\n    jurisdictions_affected: vNode.compliance?.summary?.jurisdictionsAffected || 0,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -19680,
+        -2048
+      ],
+      "id": "9820dbcb-d0be-4656-8292-04ec9f06d213",
+      "name": "Return to Parent1"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.context.owner }}",
+        "subject": "=\u2705 Accessibility Report Saved, {{ $json.url || \"Unknown URL\" }}",
+        "message": "=<!DOCTYPE html>\n<html>\n  <body style=\"font-family: Arial, sans-serif; color: #333; line-height: 1.5; margin: 0; padding: 20px;\">\n    <h2 style=\"color: #28a745; margin-bottom: 10px;\">\u2705 Accessibility Scan Completed Successfully</h2>\n    <p style=\"color: #555; margin-top: 0;\">The accessibility scan finished without errors.</p>\n\n    <!-- Scan Info -->\n    <h3 style=\"margin-top: 20px;\">\ud83d\udccc Scan Info</h3>\n    <table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\">\n      <tr><td><b>URL:</b></td><td>{{ $json.url || \"N/A\" }}</td></tr>\n      <tr><td><b>Run ID:</b></td><td>{{ $json.context?.run_id || \"N/A\" }}</td></tr>\n      <tr><td><b>Violations:</b></td>\n        <td>{{ $json.violations_count || 0 }} ({{ $json.high_impact_count || 0 }} high)</td>\n      </tr>\n    </table>\n\n    <!-- Report -->\n    <h3 style=\"margin-top: 20px;\">\ud83d\udcc4 Report</h3>\n    <p>\n      {{ $json.report_link \n        ? '<a href=\"' + $json.report_link + '\" target=\"_blank\" rel=\"noopener noreferrer\">' + 'Open Report' + '</a>' \n        : 'No report file available.' }}\n    </p>\n\n    <!-- Compliance Info -->\n    {{ $json.compliance?.summary?.jurisdictionsAffected\n      ? '<h3 style=\"margin-top: 20px;\">\ud83c\udf0d Compliance</h3><table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\"><tr><td><b>Profile:</b></td><td>' + ($json.compliance.profileName || 'All') + '</td></tr><tr><td><b>Jurisdictions Affected:</b></td><td>' + $json.compliance.summary.jurisdictionsAffected + '</td></tr><tr><td><b>Findings with Impact:</b></td><td>' + $json.compliance.summary.findingsWithJurisdictionalImpact + ' of ' + $json.compliance.summary.totalFindings + '</td></tr></table>'\n      : '' }}\n\n    <p><i>Saved to {{ $env.STORAGE_TARGET || \"Unknown Storage\" }}</i></p>\n  </body>\n</html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -20352,
+        -2048
+      ],
+      "id": "a49b1225-8b30-4568-86ab-566d44a2459e",
+      "name": "Send a message",
+      "webhookId": "b715611d-6233-408a-8075-766450e5855e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DFMKZiOx7QJorRZ0",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.random() }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -25056,
+        -1184
+      ],
+      "id": "34ed32da-9a8f-436a-8f86-799a29f8de65",
+      "name": "Wait",
+      "webhookId": "d2e652e3-6230-4432-b3a6-ffaddd7abda7"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -24832,
+        -1296
+      ],
+      "id": "3e3ae67c-5548-4a58-95ad-3e7b83f38df2",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0cd01fca-18f9-4a20-86b6-b468b2f619e1",
+              "name": "url",
+              "value": "={{ $json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "f66d54b2-e35d-4868-8aa2-f56cde6c3e60",
+              "name": "context",
+              "value": "={{ $json.context }}",
+              "type": "object"
+            },
+            {
+              "id": "gc-compliance-profile-001",
+              "name": "context.complianceProfile",
+              "value": "={{ $json.complianceProfile || $json.context?.complianceProfile || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -29312,
+        -1280
+      ],
+      "id": "682b4666-9624-4007-9f5e-116ff293b73e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "url"
+            },
+            {
+              "name": "context",
+              "type": "object"
+            },
+            {
+              "name": "complianceProfile"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -29536,
+        -1280
+      ],
+      "id": "24546033-9178-45b0-9c29-3fa7deb78a4c",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawHost = $env.N8N_HOST || \"localhost\";\nconst port = $env.N8N_PORT || \"5678\";\n\nconst hasScheme = /^https?:\\/\\//i.test(rawHost);\n\nlet scheme;\nif (hasScheme) {\n  scheme = \"\";\n} else if (rawHost.includes(\"localhost\")) {\n  scheme = \"http://\";\n} else {\n  scheme = \"https://\";\n}\n\nconst host = rawHost.replace(/\\/+$/, \"\");\n\nlet baseUrl;\nif (!port || port === \"80\" || port === \"443\") {\n  baseUrl = `${scheme}${host}`;\n} else {\n  baseUrl = `${scheme}${host}:${port}`;\n}\n\nreturn [\n  {\n    json: {\n      workflow: {\n        id: $workflow.id,\n        name: $workflow.name,\n      },\n      execution: {\n        id: $execution.id,\n        url: `${baseUrl}/execution/workflow/${$workflow.id}/${$execution.id}`,\n        retryOf: null,\n        error: {\n          name: $json.error?.name || \"NodeApiError\",\n          message:\n            $json.error?.message ||\n            \"Failed to Send Gmail.\",\n          stack: $json.error?.stack || \"\",\n          timestamp: new Date().toISOString(),\n        },\n        lastNodeExecuted: $json.node?.name || \"Send a message\",\n        mode: $execution.mode,\n      },\n      run_id: $json.run_id || $json.context?.run_id || null,\n      timestamp: new Date().toISOString(),\n      url: $json.url || null,\n      error_message: $json.error?.message || \"Unknown error\",\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -20128,
+        -1952
+      ],
+      "id": "83f84c20-fb99-41a4-866f-72efef2eaa71",
+      "name": "Handle Gmail Error Metadata"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "JEIdCUjXGGR5sBi6",
+          "mode": "list",
+          "cachedResultName": "error reusable"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -19904,
+        -1952
+      ],
+      "id": "25905cdd-9e15-4bfe-8a49-cc1d89b2f948",
+      "name": "Run Sub-Workflow: Gmail Error Notifier",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 Global Compliance Package: Enrich findings with jurisdictional impact + remediation \u2500\u2500\n\nconst complianceProfiles = {\"us\":{\"name\":\"United States\",\"laws\":[\"ADA\",\"Section 508\",\"CVAA\"]},\"canada\":{\"name\":\"Canada\",\"laws\":[\"ACA\",\"AODA\"]},\"eu\":{\"name\":\"European Union\",\"laws\":[\"EAA\",\"EU Web Accessibility Directive\",\"EN 301 549\"]},\"uk\":{\"name\":\"United Kingdom\",\"laws\":[\"Equality Act 2010\",\"UK Public Sector Accessibility Regulations\"]},\"japan\":{\"name\":\"Japan\",\"laws\":[\"JIS X 8341-3\"]},\"israel\":{\"name\":\"Israel\",\"laws\":[\"Israeli Standard 5568\"]},\"australia\":{\"name\":\"Australia\",\"laws\":[\"Australian DDA\"]},\"new_zealand\":{\"name\":\"New Zealand\",\"laws\":[\"NZ Govt Web Accessibility Standard\"]}};\n\nconst wcagGlobalMapping = {\"meta\":{\"version\":\"1.0\",\"wcagVersions\":[\"2.1\",\"2.2\"],\"notes\":\"Most global laws reference WCAG 2.0/2.1 AA. 2.2 mappings are forward-looking.\"},\"lawGroups\":{\"core_global\":[\"Section 508\",\"AODA\",\"ACA\",\"EU Web Accessibility Directive\",\"EN 301 549\",\"RGAA (France)\",\"BITV 2.0 (Germany)\",\"UNE 139803 (Spain)\",\"Stanca Act (Italy)\",\"UK Public Sector Accessibility Regulations\",\"JIS X 8341-3 (Japan)\",\"Israeli Standard 5568\",\"Australian DDA\",\"NZ Govt Web Accessibility Standard\"],\"us_federal\":[\"Section 508\",\"CVAA\"],\"canada\":[\"AODA\",\"ACA\"],\"eu\":[\"EU Web Accessibility Directive\",\"EN 301 549\",\"EAA\"],\"uk\":[\"Equality Act 2010\",\"UK Public Sector Accessibility Regulations\"],\"japan\":[\"JIS X 8341-3\"],\"israel\":[\"Israeli Standard 5568\"],\"australia\":[\"Australian DDA\"],\"new_zealand\":[\"NZ Govt Web Accessibility Standard\"]},\"wcag21\":{\"1.1.1\":{\"description\":\"Non-text Content\",\"laws\":[\"core_global\"]},\"1.2.1\":{\"description\":\"Audio-only and Video-only (Prerecorded)\",\"laws\":[\"core_global\",\"us_federal\"]},\"1.2.2\":{\"description\":\"Captions (Prerecorded)\",\"laws\":[\"core_global\",\"us_federal\"]},\"1.2.3\":{\"description\":\"Audio Description or Media Alternative\",\"laws\":[\"core_global\",\"us_federal\"]},\"1.3.1\":{\"description\":\"Info and Relationships\",\"laws\":[\"core_global\"]},\"1.3.2\":{\"description\":\"Meaningful Sequence\",\"laws\":[\"core_global\"]},\"1.3.3\":{\"description\":\"Sensory Characteristics\",\"laws\":[\"core_global\"]},\"1.4.1\":{\"description\":\"Use of Color\",\"laws\":[\"core_global\"]},\"1.4.3\":{\"description\":\"Contrast (Minimum)\",\"laws\":[\"core_global\"]},\"1.4.4\":{\"description\":\"Resize Text\",\"laws\":[\"core_global\"]},\"1.4.5\":{\"description\":\"Images of Text\",\"laws\":[\"core_global\"]},\"2.1.1\":{\"description\":\"Keyboard\",\"laws\":[\"core_global\"]},\"2.1.2\":{\"description\":\"No Keyboard Trap\",\"laws\":[\"core_global\"]},\"2.2.1\":{\"description\":\"Timing Adjustable\",\"laws\":[\"core_global\"]},\"2.2.2\":{\"description\":\"Pause, Stop, Hide\",\"laws\":[\"core_global\"]},\"2.3.1\":{\"description\":\"Three Flashes or Below Threshold\",\"laws\":[\"core_global\"]},\"2.4.1\":{\"description\":\"Bypass Blocks\",\"laws\":[\"core_global\"]},\"2.4.2\":{\"description\":\"Page Titled\",\"laws\":[\"core_global\"]},\"2.4.3\":{\"description\":\"Focus Order\",\"laws\":[\"core_global\"]},\"2.4.4\":{\"description\":\"Link Purpose (In Context)\",\"laws\":[\"core_global\"]},\"2.4.7\":{\"description\":\"Focus Visible\",\"laws\":[\"core_global\"]},\"3.1.1\":{\"description\":\"Language of Page\",\"laws\":[\"core_global\"]},\"3.1.2\":{\"description\":\"Language of Parts\",\"laws\":[\"core_global\"]},\"3.2.1\":{\"description\":\"On Focus\",\"laws\":[\"core_global\"]},\"3.2.2\":{\"description\":\"On Input\",\"laws\":[\"core_global\"]},\"3.3.1\":{\"description\":\"Error Identification\",\"laws\":[\"core_global\"]},\"3.3.2\":{\"description\":\"Labels or Instructions\",\"laws\":[\"core_global\"]},\"3.3.3\":{\"description\":\"Error Suggestion\",\"laws\":[\"core_global\"]},\"3.3.4\":{\"description\":\"Error Prevention (Legal, Financial, Data)\",\"laws\":[\"core_global\"]},\"4.1.1\":{\"description\":\"Parsing\",\"laws\":[\"core_global\"]},\"4.1.2\":{\"description\":\"Name, Role, Value\",\"laws\":[\"core_global\"]},\"4.1.3\":{\"description\":\"Status Messages\",\"laws\":[\"core_global\"]},\"1.4.10\":{\"description\":\"Reflow\",\"laws\":[\"core_global\"]},\"1.4.11\":{\"description\":\"Non-text Contrast\",\"laws\":[\"core_global\"]},\"1.4.12\":{\"description\":\"Text Spacing\",\"laws\":[\"core_global\"]},\"1.4.13\":{\"description\":\"Content on Hover or Focus\",\"laws\":[\"core_global\"]},\"2.1.4\":{\"description\":\"Character Key Shortcuts\",\"laws\":[\"core_global\"]},\"2.5.1\":{\"description\":\"Pointer Gestures\",\"laws\":[\"core_global\"]},\"2.5.2\":{\"description\":\"Pointer Cancellation\",\"laws\":[\"core_global\"]},\"2.5.3\":{\"description\":\"Label in Name\",\"laws\":[\"core_global\"]},\"2.5.4\":{\"description\":\"Motion Actuation\",\"laws\":[\"core_global\"]}},\"wcag22\":{\"2.4.11\":{\"description\":\"Focus Not Obscured (Minimum)\",\"laws\":[\"core_global\"]},\"2.4.12\":{\"description\":\"Focus Not Obscured (Enhanced)\",\"laws\":[\"core_global\"]},\"2.4.13\":{\"description\":\"Focus Appearance\",\"laws\":[\"core_global\"]},\"2.5.7\":{\"description\":\"Dragging Movements\",\"laws\":[\"core_global\"]},\"2.5.8\":{\"description\":\"Target Size (Minimum)\",\"laws\":[\"core_global\"]},\"3.2.6\":{\"description\":\"Consistent Help\",\"laws\":[\"core_global\"]},\"3.3.7\":{\"description\":\"Redundant Entry\",\"laws\":[\"core_global\"]},\"3.3.8\":{\"description\":\"Accessible Authentication (No Cognitive Test)\",\"laws\":[\"core_global\"]}}};\n\n// Remediation guidance lives in data/remediation-library.json so it can be\n// edited, reviewed and extended without touching this workflow. If the file\n// cannot be read, the inline copy below is used so a scan never fails because\n// content is missing.\nconst REMEDIATION_LIBRARY_PATH = '/data/remediation-library.json';\n\nconst inlineRemediationLibrary = {\"1.1.1\":{\"title\":\"Non-text Content\",\"whyItMatters\":\"Screen reader users and others relying on assistive tech need text alternatives to understand images and icons.\",\"howToFix\":[\"Provide meaningful alt text for informative images.\",\"Use empty alt (alt=\\\"\\\") for purely decorative images.\",\"Ensure icon buttons have accessible names via aria-label or visible text.\"],\"codeExample\":\"<img src=\\\"product.jpg\\\" alt=\\\"Red running shoes, side view\\\">\"},\"1.4.3\":{\"title\":\"Contrast (Minimum)\",\"whyItMatters\":\"Low contrast text is difficult or impossible to read for users with low vision or color vision deficiencies.\",\"howToFix\":[\"Ensure text and background colors meet at least 4.5:1 contrast ratio (3:1 for large text).\",\"Avoid placing text over busy images.\",\"Use tools to verify contrast ratios during design and development.\"],\"codeExample\":\"body { color: #222222; background-color: #FFFFFF; }\"},\"2.1.1\":{\"title\":\"Keyboard\",\"whyItMatters\":\"Users who cannot use a mouse must be able to navigate and operate all functionality via keyboard.\",\"howToFix\":[\"Ensure all interactive elements are focusable via Tab.\",\"Avoid onclick-only handlers; pair with keyboard events.\",\"Do not trap focus inside components without a clear way to exit.\"],\"codeExample\":\"<button type=\\\"button\\\">Submit</button>\"},\"2.4.7\":{\"title\":\"Focus Visible\",\"whyItMatters\":\"Keyboard users need a clear visual indicator of which element currently has focus.\",\"howToFix\":[\"Ensure focus styles are clearly visible and not removed.\",\"Use CSS to enhance focus outlines instead of disabling them.\",\"Test keyboard navigation without a mouse.\"],\"codeExample\":\"button:focus { outline: 2px solid #005fcc; outline-offset: 2px; }\"}};\n\nlet remediationLibrary = inlineRemediationLibrary;\nlet remediationSource = 'inline fallback';\ntry {\n  const fs = require('fs');\n  const raw = fs.readFileSync(REMEDIATION_LIBRARY_PATH, 'utf8');\n  const parsed = JSON.parse(raw);\n  const entries = Object.fromEntries(\n    Object.entries(parsed).filter(([k]) => !k.startsWith('_'))\n  );\n  if (Object.keys(entries).length > 0) {\n    remediationLibrary = entries;\n    remediationSource = 'file';\n  }\n} catch (e) {\n  // Falls through to the inline copy. Requires NODE_FUNCTION_ALLOW_BUILTIN=fs.\n}\n\n\n// Resolve law group names to actual law arrays\nfunction resolveLaws(lawGroupNames, lawGroups) {\n  const resolved = new Set();\n  for (const groupName of lawGroupNames) {\n    const laws = lawGroups[groupName];\n    if (laws) {\n      laws.forEach(l => resolved.add(l));\n    } else {\n      resolved.add(groupName);\n    }\n  }\n  return Array.from(resolved);\n}\n\n// Build a flat SC -> { description, resolvedLaws[] } lookup from wcag21 + wcag22\nfunction buildScLookup(mapping) {\n  const lookup = {};\n  const lawGroups = mapping.lawGroups || {};\n  for (const section of ['wcag21', 'wcag22']) {\n    const scs = mapping[section] || {};\n    for (const [sc, info] of Object.entries(scs)) {\n      lookup[sc] = {\n        description: info.description,\n        resolvedLaws: resolveLaws(info.laws || [], lawGroups)\n      };\n    }\n  }\n  return lookup;\n}\n\nconst scLookup = buildScLookup(wcagGlobalMapping);\n\n// Determine compliance profile from context or env\nconst profileKey = (\n  $json.context?.complianceProfile ||\n  $json.complianceProfile ||\n  ($env.COMPLIANCE_PROFILE || '')\n).toLowerCase().trim();\n\nconst profile = complianceProfiles[profileKey] || null;\n\n// Extract WCAG SC from violation tags or id\nfunction extractSC(violation) {\n  // Try tags first (axe format: tags like \"wcag2a\", \"wcag143\" -> \"1.4.3\")\n  if (Array.isArray(violation.tags)) {\n    for (const tag of violation.tags) {\n      const m = String(tag).match(/^wcag(\\d)(\\d)(\\d+)$/i);\n      if (m) return m[1] + '.' + m[2] + '.' + m[3];\n    }\n  }\n  // Try wcag field directly\n  if (violation.wcag) return String(violation.wcag);\n  // Try id field (pa11y format: \"WCAG2AA.Principle1.Guideline1_4.1_4_3...\")\n  const idStr = String(violation.id || '');\n  const idMatch = idStr.match(/(\\d+)_(\\d+)_(\\d+)/);\n  if (idMatch) return idMatch[1] + '.' + idMatch[2] + '.' + idMatch[3];\n  return null;\n}\n\n// Enrich scan_raw violations with jurisdictional impact\nconst violations = Array.isArray($json.scan_raw?.violations) ? $json.scan_raw.violations : [];\n\n\n// Law names must appear once. The mapping carries two spellings of the Japanese\n// standard, \"JIS X 8341-3\" and \"JIS X 8341-3 (Japan)\", which would otherwise\n// both surface under All Jurisdictions.\nfunction canonicalLaw(name) {\n  const s = String(name || \"\").trim();\n  if (/^JIS X 8341-3/i.test(s)) return \"JIS X 8341-3 (Japan)\";\n  return s;\n}\n\nfunction dedupeLaws(list) {\n  const out = [];\n  const seen = new Set();\n  for (const raw of list || []) {\n    const name = canonicalLaw(raw);\n    const key = name.toLowerCase();\n    if (!key || seen.has(key)) continue;\n    seen.add(key);\n    out.push(name);\n  }\n  return out;\n}\n\nconst enrichedViolations = violations.map(v => {\n  const sc = extractSC(v);\n  const scInfo = sc ? scLookup[sc] : null;\n\n  let jurisdictionalImpact = [];\n  if (scInfo) {\n    if (profile) {\n      jurisdictionalImpact = scInfo.resolvedLaws.filter(resolvedLaw => {\n      const rLower = resolvedLaw.toLowerCase();\n      return profile.laws.some(profileLaw => {\n        const pLower = profileLaw.toLowerCase();\n        return rLower === pLower || rLower.includes(pLower) || pLower.includes(rLower);\n      });\n    });\n    // If the SC maps to core_global, it's universally applicable.\n    // Include ALL of the profile's laws since they all reference WCAG.\n    const scEntry = (wcagGlobalMapping.wcag21 && wcagGlobalMapping.wcag21[sc]) ||\n                     (wcagGlobalMapping.wcag22 && wcagGlobalMapping.wcag22[sc]);\n    if (scEntry && scEntry.laws && scEntry.laws.includes('core_global')) {\n      for (const pLaw of profile.laws) {\n        if (!jurisdictionalImpact.some(j => j.toLowerCase() === pLaw.toLowerCase())) {\n          jurisdictionalImpact.push(pLaw);\n        }\n      }\n    }\n    // Also check non-core law groups the SC maps to\n    if (scEntry && scEntry.laws) {\n      const lawGroups = wcagGlobalMapping.lawGroups || {};\n      for (const groupName of scEntry.laws) {\n        if (groupName === 'core_global') continue;\n        const groupLaws = lawGroups[groupName] || [];\n        for (const gLaw of groupLaws) {\n          const gLower = gLaw.toLowerCase();\n          for (const pLaw of profile.laws) {\n            const pLower = pLaw.toLowerCase();\n            if (gLower === pLower || gLower.includes(pLower) || pLower.includes(gLower)) {\n              if (!jurisdictionalImpact.includes(gLaw)) {\n                jurisdictionalImpact.push(gLaw);\n              }\n            }\n          }\n        }\n      }\n    }\n    } else {\n      // No profile selected means \"All Jurisdictions\". Previously this used\n      // only the criterion's own law groups, so laws that live solely in a\n      // regional group (ADA, EAA, Equality Act 2010, CVAA) never appeared.\n      // A criterion mapped to core_global applies everywhere, so surface every\n      // law the product covers.\n      jurisdictionalImpact = scInfo.resolvedLaws.slice();\n      const scEntryAll = (wcagGlobalMapping.wcag21 && wcagGlobalMapping.wcag21[sc]) ||\n                         (wcagGlobalMapping.wcag22 && wcagGlobalMapping.wcag22[sc]);\n      if (scEntryAll && Array.isArray(scEntryAll.laws) && scEntryAll.laws.includes('core_global')) {\n        for (const p of Object.values(complianceProfiles)) {\n          for (const pLaw of p.laws) {\n            if (!jurisdictionalImpact.some(j => j.toLowerCase() === pLaw.toLowerCase())) {\n              jurisdictionalImpact.push(pLaw);\n            }\n          }\n        }\n      }\n    }\n  }\n\n  // Attach remediation from library\n  let remediationDetails = null;\n  if (sc && remediationLibrary[sc]) {\n    remediationDetails = remediationLibrary[sc];\n  }\n\n  // W3C removed 4.1.1 Parsing in WCAG 2.2 and advises it be treated as always\n  // satisfied for HTML and XML. Flag it so a report does not present an\n  // obsolete criterion as a live failure.\n  const isObsolete = !!(remediationDetails && remediationDetails.obsolete);\n\n  // Scanners often embed a concrete instruction in the help text, for example\n  // \"Recommendation: change text color to #e8741f\". Pull it out so the report\n  // can show the specific action next to the element it applies to.\n  const helpText = String(v.help || v.description || v.message || '');\n  const recMatch = helpText.match(/Recommendation:\\s*(.+?)(?:\\s*$|\\.$)/i);\n  const specificFix = recMatch ? recMatch[1].trim().replace(/\\.$/, '') : null;\n\n  const target =\n    (Array.isArray(v.nodes) && v.nodes[0] && Array.isArray(v.nodes[0].target) && v.nodes[0].target[0]) ||\n    v.selector || v.target || null;\n\n  return {\n    ...v,\n    wcag_sc: sc,\n    jurisdictionalImpact: dedupeLaws(jurisdictionalImpact),\n    remediationDetails,\n    isObsolete,\n    specificFix,\n    elementTarget: target\n  };\n});\n\n// Build byJurisdiction grouping.\n// Retired criteria (4.1.1) are excluded here as well as from the headline\n// counts. Including them inflated the Findings by Jurisdiction table and\n// jurisdictionsAffected with findings the report states are not failures.\nconst countableViolations = enrichedViolations.filter(v => !v.isObsolete);\n\nconst byJurisdiction = {};\nfor (const v of countableViolations) {\n  for (const law of (v.jurisdictionalImpact || [])) {\n    if (!byJurisdiction[law]) byJurisdiction[law] = [];\n    byJurisdiction[law].push({\n      id: v.id || '-',\n      wcag: v.wcag_sc || '-',\n      help: v.help || v.description || v.message || '-',\n      impact: v.impact || v.type || '-'\n    });\n  }\n}\n\n// Compute compliance summary\nconst complianceSummary = {\n  profile: profileKey || 'all',\n  profileName: profile ? profile.name : 'All Jurisdictions',\n  totalFindings: countableViolations.length,\n  findingsWithJurisdictionalImpact: countableViolations.filter(v => v.jurisdictionalImpact.length > 0).length,\n  jurisdictionsAffected: Object.keys(byJurisdiction).length,\n  byJurisdiction: Object.fromEntries(\n    Object.entries(byJurisdiction).map(([law, issues]) => [law, issues.length])\n  )\n};\n\nreturn [{\n  json: {\n    ...$json,\n    scan_raw: {\n      ...$json.scan_raw,\n      violations: enrichedViolations\n    },\n    compliance: {\n      profile: profileKey || 'all',\n      profileName: profile ? profile.name : 'All Jurisdictions',\n      summary: complianceSummary,\n      byJurisdiction\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -26624,
+        -1296
+      ],
+      "id": "3a388702-dcfd-4c1f-909c-5dd157002c8f",
+      "name": "Enrich Compliance & Remediation"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -20576,
+        -1936
+      ],
+      "id": "9b2bb709-d52e-4256-b91c-1c69781fca72",
+      "name": "Branch Notification Slack"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_ID }}",
+          "mode": "id"
+        },
+        "text": "=:bar_chart: *Accessibility scan*\\n*URL:* {{ $json.url || 'n/a' }}\\n*Violations:* {{ $json.violations_count ?? $json.violations ?? 0 }} ({{ $json.high_impact_count ?? $json.high_impact ?? 0 }} high)\\n{{ $json.report_link ? '<' + $json.report_link + '|Open report>' : '' }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        -20352,
+        -1936
+      ],
+      "id": "0d8c352a-65f1-47ea-8067-f724246af3b5",
+      "name": "Send Slack Notification",
+      "notesInFlow": true,
+      "notes": "Optional channel. Add a Slack credential and set NOTIFY_CHANNELS to include slack.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_TABLE_REPORTS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -25056,
+        -992
+      ],
+      "id": "3f4f625a-3b89-4648-b637-3b6caa3bd889",
+      "name": "Create Airtable Record",
+      "notesInFlow": true,
+      "notes": "Optional target. Add an Airtable credential and set the relevant target to AIRTABLE.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AZURE_OPENAI_ENDPOINT }}/openai/deployments/{{ $env.AZURE_OPENAI_DEPLOYMENT }}/chat/completions?api-version={{ $env.AZURE_OPENAI_API_VERSION }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "azureOpenAiApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messages[0].role",
+              "value": "system"
+            },
+            {
+              "name": "messages[0].content",
+              "value": "=You are an accessibility auditor producing WCAG 2.2 AA remediation plans with concise, actionable guidance and code examples."
+            },
+            {
+              "name": "messages[1].role",
+              "value": "user"
+            },
+            {
+              "name": "messages[1].content",
+              "value": "=URL: {{ $json.url }}\n\nViolations (JSON): {{ JSON.stringify($json.countable_violations || $json.scan_raw.violations) }}\n\nOutput JSON with keys: summary, prioritized[], fixes[], qaChecklist[].\n\nFor each prioritized item include: issueId, wcag[], impact (low/med/high), effort (low/med/high).\n\nSchema and formatting requirements:\n- Return a single JSON object only (no markdown, no prose outside JSON, no extra keys).\n- Keys must appear exactly as: summary, prioritized, fixes, qaChecklist.\n\nsummary\n- Type: string\n- Content: 1-5 concise sentences in natural language\n- Do not count or estimate totals; do not restate the full violations list\n\nprioritized\n- Type: array<object> (0-20 items)\n- Each object must be:\n {\n    \"issueId\": string (must exactly match an \"id\" from the Violations JSON),\n    \"wcag\": string[] (e.g., [\"1.4.3\"]; may be empty),\n    \"impact\": \"low\" | \"medium\" | \"high\" (use \"medium\", not \"med\"; map any synonyms like \"serious\"/\"critical\" internally to these),\n    \"effort\": \"low\" | \"medium\" | \"high\"\n }\n- Include unique issueId values only (no duplicates)\n\nfixes\n- Type: array<object> (0+ items)\n- Each object must be:\n {\n    \"target\": string (CSS selector or element hint; use \" if unknown),\n    \"description\": string (clear, imperative, human-readable; never empty),\n    \"codeExample\": string (concise code snippet; use \" if unknown)\n }\n\nqaChecklist\n- Type: string[] (3-15 items)\n- Each item is a single, testable verification step written as an imperative sentence\n\nStrict JSON rules\n- UTF-8 text, no comments, no trailing commas, no code fences, no additional keys"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -27744,
+        -640
+      ],
+      "id": "894d9b90-7f2c-4dc4-b855-b9843c4212fe",
+      "name": "Generate Azure Remediation Plan",
+      "notesInFlow": true,
+      "notes": "Optional provider. Add an Azure OpenAI credential and set AI_MODE=AZURE.",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_API_BASE }}/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.CLAUDE_MODEL }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": "4096"
+            },
+            {
+              "name": "system",
+              "value": "=You are an accessibility auditor producing WCAG 2.2 AA remediation plans with concise, actionable guidance and code examples."
+            },
+            {
+              "name": "messages[0].role",
+              "value": "user"
+            },
+            {
+              "name": "messages[0].content",
+              "value": "=URL: {{ $json.url }}\n\nViolations (JSON): {{ JSON.stringify($json.countable_violations || $json.scan_raw.violations) }}\n\nOutput JSON with keys: summary, prioritized[], fixes[], qaChecklist[].\n\nFor each prioritized item include: issueId, wcag[], impact (low/med/high), effort (low/med/high).\n\nSchema and formatting requirements:\n- Return a single JSON object only (no markdown, no prose outside JSON, no extra keys).\n- Keys must appear exactly as: summary, prioritized, fixes, qaChecklist.\n\nsummary\n- Type: string\n- Content: 1-5 concise sentences in natural language\n- Do not count or estimate totals; do not restate the full violations list\n\nprioritized\n- Type: array<object> (0-20 items)\n- Each object must be:\n {\n    \"issueId\": string (must exactly match an \"id\" from the Violations JSON),\n    \"wcag\": string[] (e.g., [\"1.4.3\"]; may be empty),\n    \"impact\": \"low\" | \"medium\" | \"high\" (use \"medium\", not \"med\"; map any synonyms like \"serious\"/\"critical\" internally to these),\n    \"effort\": \"low\" | \"medium\" | \"high\"\n }\n- Include unique issueId values only (no duplicates)\n\nfixes\n- Type: array<object> (0+ items)\n- Each object must be:\n {\n    \"target\": string (CSS selector or element hint; use \" if unknown),\n    \"description\": string (clear, imperative, human-readable; never empty),\n    \"codeExample\": string (concise code snippet; use \" if unknown)\n }\n\nqaChecklist\n- Type: string[] (3-15 items)\n- Each item is a single, testable verification step written as an imperative sentence\n\nStrict JSON rules\n- UTF-8 text, no comments, no trailing commas, no code fences, no additional keys"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -27744,
+        -400
+      ],
+      "id": "f4397c89-b18b-4294-b10c-57dc411af7c6",
+      "name": "Generate Claude Remediation Plan",
+      "notesInFlow": true,
+      "notes": "Optional provider. Add an Anthropic credential and set AI_MODE=CLAUDE. Response shape differs from OpenAI; Parse AI Response handles both.",
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get Reports": {
+      "main": [
+        [
+          {
+            "node": "Merge Report Sources",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge New vs Existing CSV Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Decide CSV Append vs New",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Assemble Binary CSV": {
+      "main": [
+        [
+          {
+            "node": "Write Reports CSV (Local)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CSV Rows (New File)": {
+      "main": [
+        [
+          {
+            "node": "Merge New vs Existing CSV Rows",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Build New Local CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report Link": {
+      "main": [
+        [
+          {
+            "node": "Attach Report UUID",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Generate OpenAI Remediation Plan": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response + Cost",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle OpenAI Error Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Error AI Final Output": {
+      "main": [
+        [
+          {
+            "node": "Assign Report ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge AI Result": {
+      "main": [
+        [
+          {
+            "node": "Format AI Response & Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response + Cost": {
+      "main": [
+        [
+          {
+            "node": "Merge AI Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Scan Engine": {
+      "main": [
+        [
+          {
+            "node": "Execute AXE Scan",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Combine Context + AXE Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute PA11Y Scan",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Combine Context + PA11Y Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute AXE Scan": {
+      "main": [
+        [
+          {
+            "node": "Parse AXE Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AXE Output": {
+      "main": [
+        [
+          {
+            "node": "Combine Context + AXE Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Execute PA11Y Scan": {
+      "main": [
+        [
+          {
+            "node": "Parse PA11Y Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse PA11Y Output": {
+      "main": [
+        [
+          {
+            "node": "Combine Context + PA11Y Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Combine Context + AXE Results": {
+      "main": [
+        [
+          {
+            "node": "Generate Violations Plan (Rule-based)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Context + PA11Y Results": {
+      "main": [
+        [
+          {
+            "node": "Generate Violations Plan (Rule-based)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Violations Plan (Rule-based)": {
+      "main": [
+        [
+          {
+            "node": "Choose AI Provider",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Error AI Final Output",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge AI Result",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Choose AI Provider": {
+      "main": [
+        [
+          {
+            "node": "Assign Report ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate OpenAI Remediation Plan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Azure Remediation Plan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Claude Remediation Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format AI Response & Plan": {
+      "main": [
+        [
+          {
+            "node": "Assign Report ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HTML Report": {
+      "main": [
+        [
+          {
+            "node": "Merge Report ID + Report Link",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upload HTML Report to Cloudinary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Attach Report UUID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload HTML Report to Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Merge Report ID + Report Link",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Save Report Metadata to Sheets": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Sheets Error Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Storage Target": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Airtable Record",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare CSV Metadata Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Reports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare CSV Metadata Row": {
+      "main": [
+        [
+          {
+            "node": "Read Local Reports CSV",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge CSV Branches (Append Mode)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Read Local Reports CSV": {
+      "main": [
+        [
+          {
+            "node": "Check Reports CSV Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Reports CSV Exists": {
+      "main": [
+        [
+          {
+            "node": "Merge Notifications Branch",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Merge CSV Branches (Append Mode)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Build CSV Rows (Append)": {
+      "main": [
+        [
+          {
+            "node": "Upload CSV to Cloudinary (Append)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble CSV Binary (Append)": {
+      "main": [
+        [
+          {
+            "node": "Upload Reports CSV to Cloudinary (New File)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Reports CSV (Local)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Reports CSV to Cloudinary (New File)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle S3 Upload Error Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload CSV to Cloudinary (Append)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle S3 Upload Error Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge New vs Existing CSV Rows": {
+      "main": [
+        [
+          {
+            "node": "Assemble CSV Binary (Append)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide CSV Append vs New": {
+      "main": [
+        [
+          {
+            "node": "Prepare Row for Missing Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge CSV Branches (Append Mode)": {
+      "main": [
+        [
+          {
+            "node": "Assemble Binary CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Row for Missing Record": {
+      "main": [
+        [
+          {
+            "node": "Build CSV Rows (Append)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Row for Existing Record": {
+      "main": [
+        [
+          {
+            "node": "Build CSV Rows (New File)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Notification Targets": {
+      "main": [
+        [
+          {
+            "node": "Choose Notification Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Notification Channel": {
+      "main": [
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Extract CSV from File": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Report Sources": {
+      "main": [
+        [
+          {
+            "node": "Prepare Row for Existing Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Notifications Branch": {
+      "main": [
+        [
+          {
+            "node": "Extract CSV from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Report UUID": {
+      "main": [
+        [
+          {
+            "node": "Choose Storage Target",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch AI Error Handling",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Report Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Decide CSV Append vs New",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Notifications Branch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch S3 Error Handling",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle OpenAI Error Metadata": {
+      "main": [
+        [
+          {
+            "node": "Run Sub-Workflow: OpenAI Error Notifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Report ID + Report Link": {
+      "main": [
+        [
+          {
+            "node": "Build Report Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Sub-Workflow: OpenAI Error Notifier": {
+      "main": [
+        [
+          {
+            "node": "Merge Error AI Final Output",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Branch S3 Error Handling": {
+      "main": [
+        [
+          {
+            "node": "Prepare CSV Metadata Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Sub-Workflow: S3 Error Notifier": {
+      "main": [
+        [
+          {
+            "node": "Branch S3 Error Handling",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Run Sub-Workflow: Sheets Error Notifier": {
+      "main": [
+        [
+          {
+            "node": "Branch AI Error Handling",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Handle Sheets Error Metadata": {
+      "main": [
+        [
+          {
+            "node": "Run Sub-Workflow: Sheets Error Notifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle S3 Upload Error Metadata": {
+      "main": [
+        [
+          {
+            "node": "Run Sub-Workflow: S3 Error Notifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch AI Error Handling": {
+      "main": [
+        [
+          {
+            "node": "Prepare CSV Metadata Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build New Local CSV": {
+      "main": [
+        [
+          {
+            "node": "Append New Data + Write Local CSV (reports.csv)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append New Data + Write Local CSV (reports.csv)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Notification Email": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Report ID": {
+      "main": [
+        [
+          {
+            "node": "Enrich Compliance & Remediation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Return to Parent1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Gmail Error Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Save Report Metadata to Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Choose Scan Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Gmail Error Metadata": {
+      "main": [
+        [
+          {
+            "node": "Run Sub-Workflow: Gmail Error Notifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Sub-Workflow: Gmail Error Notifier": {
+      "main": [
+        [
+          {
+            "node": "Return to Parent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich Compliance & Remediation": {
+      "main": [
+        [
+          {
+            "node": "Build HTML Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Notification Slack": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Azure Remediation Plan": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response + Cost",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle OpenAI Error Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Claude Remediation Plan": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response + Cost",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle OpenAI Error Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "0NYAAQrl0oyyecyl",
+    "timeSavedPerExecution": 5,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "availableInMCP": false
+  },
+  "versionId": "fd3cf0ea-a430-4cf9-ae93-3ff3ddc18009",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8d247cf16eb4040c6cf79bccbccc70033d90560918afac46d25aed633b9f1b92"
+  },
+  "id": "HrlKECidXb47thNW",
+  "tags": []
+}

@@ -1,0 +1,629 @@
+{
+  "name": "error trigger global",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2464,
+        80
+      ],
+      "id": "fef3a7ca-4d6b-4399-91d5-14a2f41af64e",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const notifyEnv = $env.NOTIFY_CHANNELS || \"\";\n\nif (!notifyEnv.trim()) {\n  return [];\n}\n\nconst channels = notifyEnv.split(\",\").map(x => x.trim()).filter(Boolean);\nreturn channels.map(c => ({ json: { channel: c } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2240,
+        272
+      ],
+      "id": "53f4332a-51c9-4312-9223-f730bc9a3f9a",
+      "name": "Prepare Notification Targets",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1a96e9f1-c634-461e-af04-62a6a5b0bea5"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "email"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "79c0c881-a7a8-490d-98f6-79aac5959983",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "slack",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "slack"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "92f51215-7692-44fe-ab06-1ea0557797d6",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "sms",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sms"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8500cc59-39e7-4018-82da-deec4b83b7dc",
+                    "leftValue": "={{ $json.channel.toLowerCase() }}",
+                    "rightValue": "crm",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "crm"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -2016,
+        224
+      ],
+      "id": "f0f60e4b-efc6-4b8c-bfb1-6e0e9f65b73a",
+      "name": "Choose Notification Channel"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1792,
+        176
+      ],
+      "id": "60b9e9c2-10ee-45e0-bfc6-8a17f0cd68b8",
+      "name": "Branch Notification Email"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1120,
+        80
+      ],
+      "id": "098abf88-bb58-4dd7-9053-ad9b39a6c4c5",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_ACCESSIBILITY_RESULTS_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEETS_SHEET_ERRORS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "created_at\u00a0": "={{ new Date().toISOString() }}",
+            "payload_json\u00a0": "={{ JSON.stringify($json) }}",
+            "step\u00a0": "={{ $json.execution?.error?.node?.name || $json.execution?.lastNodeExecuted || \"\" }}",
+            "url\u00a0": "={{ $json.url || $json.execution?.error?.message?.match(/https?:\\/\\/\\S+/)?.[0] || \"\" }}",
+            "error_message\u00a0": "={{ $json.execution?.error?.message || \"\" }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "run_id\u00a0",
+              "displayName": "run_id\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url\u00a0",
+              "displayName": "url\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "step\u00a0",
+              "displayName": "step\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_message\u00a0",
+              "displayName": "error_message\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payload_json\u00a0",
+              "displayName": "payload_json\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at\u00a0",
+              "displayName": "created_at\u00a0",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -896,
+        80
+      ],
+      "id": "b10f3608-ef5f-4b46-ab21-2421da61c03a",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DzNhHwxMPqOC26xb",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "SHEETS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "bfbc4424-c1a7-4cc0-887d-5aa252198a3b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SHEETS"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0dbf1485-8171-4f27-ba03-5a7080eae266",
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "AIRTABLE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AIRTABLE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "bcd4c46d-0f86-40f7-b9c6-3503daa8b2d6",
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "CSV",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CSV"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "61a7b84c-b453-45d4-9f5a-064d7bdf159f",
+                    "leftValue": "={{ $env.STORAGE_TARGET.toUpperCase() }}",
+                    "rightValue": "S3",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "S3"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 0
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -1344,
+        144
+      ],
+      "id": "90760a8f-a53c-41f6-b2b7-67f386f438db",
+      "name": "Choose Storage Target"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.ALERT_EMAIL_TO }}",
+        "subject": "=\ud83d\udea8 [n8n Error] Workflow {{ $json[\"workflow\"][\"name\"] }} failed at node {{ $json[\"execution\"][\"lastNodeExecuted\"] }}",
+        "message": "=<!DOCTYPE html>\n<html>\n  <body style=\"font-family: Arial, sans-serif; color: #333; line-height: 1.5; margin: 0; padding: 20px;\">\n    <h2 style=\"color: #d9534f; margin-bottom: 10px;\">\ud83d\udea8 Workflow Execution Failed</h2>\n    <p style=\"color: #555; margin-top: 0;\">An error occurred during workflow execution.</p>\n\n    <!-- Workflow Info -->\n    <h3 style=\"margin-top: 20px;\">\ud83d\udccc Workflow Info</h3>\n    <table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\">\n      <tr><td><b>Name:</b></td><td>{{ $json[\"workflow\"]?.[\"name\"] || \"N/A\" }}</td></tr>\n      <tr><td><b>ID:</b></td><td>{{ $json[\"workflow\"]?.[\"id\"] || \"N/A\" }}</td></tr>\n    </table>\n\n    <!-- Execution Info -->\n    <h3 style=\"margin-top: 20px;\">\u2699\ufe0f Execution Info</h3>\n    <table style=\"border-collapse: collapse; width: 100%; max-width: 600px;\">\n      <tr><td><b>Execution ID:</b></td><td>{{ $json[\"execution\"]?.[\"id\"] || \"N/A\" }}</td></tr>\n      <tr><td><b>Node:</b></td><td>{{ $json[\"execution\"]?.[\"lastNodeExecuted\"] || \"N/A\" }}</td></tr>\n      <tr><td><b>Mode:</b></td><td>{{ $json[\"execution\"]?.[\"mode\"] || \"N/A\" }}</td></tr>\n      <tr><td><b>Started At:</b></td><td>  {{ $json.execution?.error?.timestamp \n    ? new Date($json.execution.error.timestamp).toISOString() \n    : \"N/A\" }}</td></tr>\n      <tr>\n        <td><b>Details:</b></td>\n        <td>\n          <a href=\"{{ $json[\"execution\"]?.[\"url\"] || \"#\" }}\" target=\"_blank\" style=\"color:#d9534f;\">\n            {{ $json[\"execution\"]?.[\"url\"] ? \"View Execution in n8n\" : \"No execution URL available\" }}\n          </a>\n        </td>\n      </tr>\n    </table>\n\n    <!-- Error Details -->\n    <h3 style=\"margin-top: 20px;\">\u274c Error Details</h3>\n    <p><b>Type:</b> {{ $json[\"execution\"]?.[\"error\"]?.[\"name\"] || \"Unknown Error\" }}</p>\n    <p><b>Message:</b></p>\n    <pre style=\"background:#fdf2f2; padding:10px; border:1px solid #f5c2c7; border-radius:4px; white-space: pre-wrap;\">\n{{ $json[\"execution\"]?.[\"error\"]?.[\"message\"] || \"No error message available\" }}\n    </pre>\n\n    <!-- Stack Trace -->\n    <h3 style=\"margin-top: 20px;\">\ud83d\udcc4 Stack Trace (for debugging)</h3>\n    <pre style=\"background:#f8f9fa; padding:10px; border:1px solid #ddd; border-radius:4px; font-size:12px; white-space: pre-wrap;\">\n{{ $json[\"execution\"]?.[\"error\"]?.[\"stack\"] || \"No stack trace available\" }}\n    </pre>\n  </body>\n</html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -1568,
+        176
+      ],
+      "id": "36c7dff3-33c1-452c-84bc-25dd31fecea1",
+      "name": "Send a message",
+      "webhookId": "b715611d-6233-408a-8075-766450e5855e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "DFMKZiOx7QJorRZ0",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1792,
+        448
+      ],
+      "id": "7ed4ac98-a2a6-479e-b629-d4c0801666b8",
+      "name": "Branch Notification Slack"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_ID }}",
+          "mode": "id"
+        },
+        "text": "=:bar_chart: *Accessibility scan*\\n*URL:* {{ $json.url || 'n/a' }}\\n*Violations:* {{ $json.violations_count ?? $json.violations ?? 0 }} ({{ $json.high_impact_count ?? $json.high_impact ?? 0 }} high)\\n{{ $json.report_link ? '<' + $json.report_link + '|Open report>' : '' }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        -1568,
+        448
+      ],
+      "id": "8585ac31-dd88-4e4a-b197-697d22a61e1c",
+      "name": "Send Slack Notification",
+      "notesInFlow": true,
+      "notes": "Optional channel. Add a Slack credential and set NOTIFY_CHANNELS to include slack.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_TABLE_ERRORS_ID }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -1120,
+        480
+      ],
+      "id": "7b63edec-e0ff-4c98-91dc-d1d05e13036f",
+      "name": "Create Airtable Record",
+      "notesInFlow": true,
+      "notes": "Optional target. Add an Airtable credential and set the relevant target to AIRTABLE.",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Targets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Notification Targets": {
+      "main": [
+        [
+          {
+            "node": "Choose Notification Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Notification Channel": {
+      "main": [
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Branch Notification Slack",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "node": "Branch Notification Email",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Branch Notification Email": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Storage Target": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Create Airtable Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Choose Storage Target",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Notification Slack": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timeSavedPerExecution": 1
+  },
+  "versionId": "babf7a73-e2b1-4dff-add3-dc00571771f9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8d247cf16eb4040c6cf79bccbccc70033d90560918afac46d25aed633b9f1b92"
+  },
+  "id": "0NYAAQrl0oyyecyl",
+  "tags": []
+}

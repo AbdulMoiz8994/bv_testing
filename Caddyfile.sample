@@ -1,0 +1,50 @@
+Copy to Caddyfile and replace the domain names.
+Caddyfile is gitignored because it contains your real hostnames.
+
+{
+	Ensure rate_limit runs before proxying
+	order rate_limit before reverse_proxy
+}
+
+n8n. Serves the editor interface and the public webhook endpoint.
+n8n.example.com {
+	@webhook path /webhook/*
+	handle @webhook {
+		rate_limit {
+			zone webhook {
+				key    {remote_host}
+				events 10
+				window 1m
+			}
+			log_key
+		}
+		reverse_proxy n8n:5678
+	}
+
+	handle {
+		reverse_proxy n8n:5678
+	}
+
+	handle_errors {
+		@rl expression {http.error.status_code} == 429
+		header @rl Content-Type application/json
+		respond @rl 429 {
+			body "{\"error\":\"rate_limited\",\"retry_after\":\"{http.response.header.Retry-After}\"}"
+		}
+	}
+}
+
+Grafana
+grafana.example.com {
+	reverse_proxy grafana:3000
+}
+
+Prometheus. Protected by basic auth.
+Generate the hash with:
+  make hash-password PASSWORD='yourpassword'
+prometheus.example.com {
+	basic_auth {
+		{$PROMETHEUS_USER} {$PROMETHEUS_PASS_HASH}
+	}
+	reverse_proxy prometheus:9090
+}
